@@ -134,13 +134,20 @@ export const startServer = async (options = {}) => {
     void app.handler(req, res);
   });
 
-  server.listen(port, '127.0.0.1');
-  await new Promise((resolve, reject) => {
-    server.once('listening', resolve);
-    server.once('error', reject);
-  });
-
+  // The file must exist before anything can observe health, or a caller that
+  // polls health and then reads server.json can find it missing.
   await writeServerFile({ pid: process.pid, port, version: currentVersion });
+
+  try {
+    server.listen(port, '127.0.0.1');
+    await new Promise((resolve, reject) => {
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+  } catch (err) {
+    await rm(serverPath(), { force: true });
+    throw err;
+  }
 
   let closed = false;
   const close = async () => {

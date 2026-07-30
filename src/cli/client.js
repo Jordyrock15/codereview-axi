@@ -97,9 +97,19 @@ export const ensureServer = async () => {
     await rm(serverPath(), { force: true });
   }
 
-  const port = await findPort(DEFAULT_PORT);
-  await spawnDaemon(port);
-  return port;
+  // findPort proves a port free by binding, then releases it, so a concurrent
+  // starter can take it first. Retry rather than failing the command.
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const port = await findPort(DEFAULT_PORT);
+    try {
+      await spawnDaemon(port);
+      return port;
+    } catch (err) {
+      if (attempt === 4) throw err;
+    }
+  }
+
+  throw new CliError(3, 'could not start a cr server');
 };
 
 /**
