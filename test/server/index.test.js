@@ -91,6 +91,19 @@ test('health refuses a foreign Host', async (t) => {
   assert.equal(status, 403);
 });
 
+test('health refuses a mismatched Origin', async (t) => {
+  await withHome(t);
+  const { startServer } = await import('../../src/server/index.js');
+
+  const server = await startServer({ port: 45285 });
+  t.after(server.close);
+
+  const res = await fetch('http://127.0.0.1:45285/api/health', {
+    headers: { Origin: 'http://evil.example.com' },
+  });
+  assert.equal(res.status, 403);
+});
+
 test('the server is not reachable off loopback', async (t) => {
   await withHome(t);
   const { startServer } = await import('../../src/server/index.js');

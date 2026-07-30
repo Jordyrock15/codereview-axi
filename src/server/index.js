@@ -4,6 +4,7 @@ import { readFile, writeFile, mkdir, rm, chmod } from 'node:fs/promises';
 import { homeDir, serverPath } from '../paths.js';
 import { createApp } from './app.js';
 import { sendJson } from './router.js';
+import { checkOrigin } from './security.js';
 
 export const DEFAULT_PORT = 4390;
 
@@ -79,13 +80,15 @@ export const startServer = async (options = {}) => {
     // aborted-socket guard; without this a disconnect mid-response throws.
     res.on('error', () => {});
 
-    const host = typeof req.headers.host === 'string' ? req.headers.host : '';
-    const loopback = [`127.0.0.1:${port}`, `localhost:${port}`].includes(host);
-
-    if (!loopback) {
-      sendJson(res, 403, { error: 'host not allowed' });
+    // Reuse the shared check rather than a second copy of the allow-list, so
+    // these two routes cannot drift out of step with every guarded route.
+    const verdict = checkOrigin({ headers: req.headers, port });
+    if (!verdict.ok) {
+      sendJson(res, verdict.status, { error: verdict.message });
       return;
     }
+
+    const host = typeof req.headers.host === 'string' ? req.headers.host : '';
 
     /** @type {URL} */
     let url;
@@ -114,6 +117,9 @@ export const startServer = async (options = {}) => {
         } catch {
           pid = null;
         }
+        // Not an auth boundary: /api/health hands out this pid to any loopback
+        // caller with no token. This only stops a blind or misdirected request,
+        // not one that has deliberately read the pid first.
         if (pid !== process.pid) {
           sendJson(res, 403, { error: 'pid mismatch' });
           return;
