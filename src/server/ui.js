@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { LARGE_FILE_LINES } from '../diff/snapshot.js';
 
 /** @type {Record<string, string>} */
 const TYPES = {
@@ -18,7 +19,7 @@ export const shellHtml = (key) => `<!doctype html>
 <title>cr review</title>
 <link rel="stylesheet" href="/assets/styles.css">
 </head>
-<body data-key="${key}">
+<body data-key="${key}" data-large="${LARGE_FILE_LINES}">
 <header id="bar">
   <span id="note"></span>
   <span id="counts"></span>

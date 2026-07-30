@@ -64,3 +64,17 @@ test('GET context 400s without a file', async (t) => {
   const { call, key, token } = await setup(t);
   assert.equal((await call('GET', `/api/sessions/${key}/context?t=${token}&from=1&to=2`)).status, 400);
 });
+
+test('GET context 400s on a path outside the diff', async (t) => {
+  const { call, key, token } = await setup(t);
+  const res = await call('GET', `/api/sessions/${key}/context?t=${token}&file=../escape.txt&from=1&to=1`);
+
+  assert.equal(res.status, 400);
+  assert.match(res.json.error, /not a file in this diff/);
+});
+
+test('GET context 400s on non-numeric bounds', async (t) => {
+  const { call, key, token } = await setup(t);
+  const res = await call('GET', `/api/sessions/${key}/context?t=${token}&file=a.js&from=nope&to=also-nope`);
+  assert.equal(res.status, 400);
+});

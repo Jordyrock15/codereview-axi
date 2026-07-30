@@ -24,7 +24,7 @@ const api = (path, options = {}) => fetch(`/api/sessions/${key}${path}`, {
   headers: { 'x-cr-token': token, ...(options.body ? { 'Content-Type': 'application/json' } : {}) },
 });
 
-const LARGE = 1500;
+const LARGE = Number(document.body.dataset.large ?? 1500);
 
 /** @type {{session: Session|null, current: string|null}} */
 const view = { session: null, current: null };

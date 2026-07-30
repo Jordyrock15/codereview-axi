@@ -55,6 +55,22 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
     return session;
   };
 
+  /**
+   * Only files in the current diff may be read. Without this, a caller holding
+   * the token can walk out of the repo with a relative path such as ../secret.
+   * @param {Session} session
+   * @param {unknown} file
+   * @returns {string}
+   */
+  const requireDiffFile = (session, file) => {
+    const path = String(file ?? '');
+    if (path === '') throw new StateError(400, 'file is required');
+    if (!session.snapshot.files.some((entry) => entry.path === path)) {
+      throw new StateError(400, `${path} is not a file in this diff`);
+    }
+    return path;
+  };
+
   /** @type {Map<string, Set<() => void>>} */
   const waiters = new Map();
 
@@ -159,7 +175,10 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
       method: 'POST',
       pattern: '/api/sessions/:key/comments',
       handler: async (ctx) => {
-        requireOpen(await guarded(ctx));
+        const session = requireOpen(await guarded(ctx));
+        // A traversing path here would be read back later by the pending poll.
+        if ((ctx.body?.scope ?? 'line') !== 'session') requireDiffFile(session, ctx.body?.file);
+
         const comment = await mutateState((state) => (
           addComment(state.sessions[ctx.params.key], ctx.body ?? {}, now())
         ));
@@ -316,11 +335,13 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
       pattern: '/api/sessions/:key/context',
       handler: async (ctx) => {
         const session = await guarded(ctx);
-        const file = ctx.query.get('file');
-        if (!file) throw new StateError(400, 'file is required');
+        const file = requireDiffFile(session, ctx.query.get('file'));
 
         const from = Number(ctx.query.get('from') ?? 1);
         const to = Number(ctx.query.get('to') ?? from);
+        if (!Number.isFinite(from) || !Number.isFinite(to)) {
+          throw new StateError(400, 'from and to must be numbers');
+        }
         return { body: await expandContext(session.repo, file, from, to) };
       },
     },
