@@ -198,3 +198,65 @@ test('creating a session reaps sessions abandoned for over a day', async (t) => 
 
   assert.equal((await call('GET', `/api/sessions/${first.key}?t=${first.token}`)).json.status, 'closed');
 });
+
+test('POST /api/sessions reuses an open session and keeps its comments', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.write('a.js', 'two\n');
+
+  const { call } = await startApp(t);
+  const first = (await call('POST', '/api/sessions', { repo: repo.dir, note: 'first' })).json;
+
+  await call('POST', `/api/sessions/${first.key}/comments?t=${first.token}`, {
+    scope: 'line', file: 'a.js', side: 'new', startLine: 1, endLine: 1, quote: 'two', body: 'keep me', verdict: 'fix',
+  });
+
+  const second = (await call('POST', '/api/sessions', { repo: repo.dir, note: 'second' })).json;
+
+  assert.equal(second.reused, true);
+  assert.equal(second.token, first.token);
+  assert.equal(second.comments.length, 1);
+  assert.equal(second.note, 'second');
+});
+test('POST refresh recomputes the diff, re-anchors, and publishes to subscribers', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\ntwo\nthree\n' });
+  t.after(repo.cleanup);
+  await repo.write('a.js', 'one\nCHANGED\nthree\n');
+
+  const { call, hub } = await startApp(t);
+  const { key, token } = (await call('POST', '/api/sessions', { repo: repo.dir, note: 'n' })).json;
+
+  await call('POST', `/api/sessions/${key}/comments?t=${token}`, {
+    scope: 'line', file: 'a.js', side: 'new', startLine: 2, endLine: 2, quote: 'CHANGED', body: 'move this', verdict: 'fix',
+  });
+
+  /** @type {{k: string, event: string, data: unknown}[]} */
+  const published = [];
+  hub.publish = (k, event, data) => { published.push({ k, event, data }); return 1; };
+
+  await repo.write('a.js', 'zero\none\nCHANGED\nthree\n');
+  const res = await call('POST', `/api/sessions/${key}/refresh?t=${token}`);
+
+  assert.equal(res.status, 200);
+  assert.equal(res.json.relocated.length, 1);
+  assert.deepEqual(res.json.stale, []);
+  assert.equal(published[0].event, 'refreshed');
+
+  const state = (await call('GET', `/api/sessions/${key}?t=${token}`)).json;
+  assert.equal(state.comments[0].startLine, 3);
+});
+test('POST refresh marks a comment stale when its quote is gone', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\ntwo\n' });
+  t.after(repo.cleanup);
+  await repo.write('a.js', 'one\nTWO\n');
+
+  const { call } = await startApp(t);
+  const { key, token } = (await call('POST', '/api/sessions', { repo: repo.dir, note: 'n' })).json;
+  await call('POST', `/api/sessions/${key}/comments?t=${token}`, {
+    scope: 'line', file: 'a.js', side: 'new', startLine: 2, endLine: 2, quote: 'TWO', body: 'x', verdict: 'fix',
+  });
+
+  await repo.write('a.js', 'one\nsomething else\n');
+  const res = await call('POST', `/api/sessions/${key}/refresh?t=${token}`);
+  assert.deepEqual(res.json.stale, [1]);
+});
