@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, stat, readFile, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, stat, writeFile, mkdir, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -63,4 +63,22 @@ test('mutateState returns the callback result', async (t) => {
   await withHome(t);
   const { mutateState } = await import('../../src/state/store.js');
   assert.equal(await mutateState(() => 'value'), 'value');
+});
+
+test('saveState tightens the mode of a pre-existing loose directory', async (t) => {
+  const dir = await withHome(t);
+  await chmod(dir, 0o755);
+  const { saveState } = await import('../../src/state/store.js');
+
+  await saveState({ sessions: {} });
+
+  assert.equal((await stat(dir)).mode & 0o777, 0o700);
+});
+
+test('loadState rejects a file whose sessions field is not a record', async (t) => {
+  const dir = await withHome(t);
+  await mkdir(dir, { recursive: true });
+  await writeFile(path.join(dir, 'state.json'), '{"sessions": "oops"}');
+  const { loadState } = await import('../../src/state/store.js');
+  assert.deepEqual(await loadState(), { sessions: {} });
 });

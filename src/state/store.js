@@ -1,4 +1,5 @@
 import { readFile, writeFile, mkdir, rename, chmod } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { homeDir, statePath } from '../paths.js';
 
 /**
@@ -10,7 +11,9 @@ import { homeDir, statePath } from '../paths.js';
 export const loadState = async () => {
   try {
     const parsed = JSON.parse(await readFile(statePath(), 'utf8'));
-    return parsed && typeof parsed === 'object' && parsed.sessions ? parsed : { sessions: {} };
+    const ok = parsed && typeof parsed === 'object' && typeof parsed.sessions === 'object'
+      && parsed.sessions !== null && !Array.isArray(parsed.sessions);
+    return ok ? parsed : { sessions: {} };
   } catch {
     return { sessions: {} };
   }
@@ -23,9 +26,11 @@ export const loadState = async () => {
 export const saveState = async (state) => {
   const dir = homeDir();
   await mkdir(dir, { recursive: true, mode: 0o700 });
+  // mkdir's mode applies only to a directory it creates, so an existing one needs this.
+  await chmod(dir, 0o700);
 
   const target = statePath();
-  const temp = `${target}.${process.pid}.tmp`;
+  const temp = `${target}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(temp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
   await rename(temp, target);
   await chmod(target, 0o600);
