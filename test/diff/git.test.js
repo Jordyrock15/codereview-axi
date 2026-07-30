@@ -16,6 +16,10 @@ test('toplevel returns null outside a repo', async () => {
   assert.equal(await toplevel(tmpdir()), null);
 });
 
+test('toplevel surfaces a spawn failure rather than reporting it as "not a repo"', async () => {
+  await assert.rejects(() => toplevel('/no/such/directory/at/all'));
+});
+
 test('diffUnstaged sees working tree edits', async (t) => {
   const repo = await makeRepo({ 'a.js': 'one\n' });
   t.after(repo.cleanup);

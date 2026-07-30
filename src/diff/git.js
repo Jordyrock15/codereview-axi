@@ -24,7 +24,10 @@ const git = async (cwd, args) => {
 export const toplevel = async (cwd) => {
   try {
     return (await git(cwd, ['rev-parse', '--show-toplevel'])).trim();
-  } catch {
+  } catch (/** @type {any} */ err) {
+    // A non-zero exit means "not a repo"; a spawn failure means
+    // something is wrong with the environment, not the path.
+    if (err.code === 'ENOENT') throw new Error('git not found on PATH');
     return null;
   }
 };
