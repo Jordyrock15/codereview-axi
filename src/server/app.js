@@ -271,7 +271,7 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
       method: 'PATCH',
       pattern: '/api/sessions/:key/note',
       handler: async (ctx) => {
-        await guarded(ctx);
+        requireOpen(await guarded(ctx));
         const note = String(ctx.body?.note ?? '');
         const session = await mutateState((state) => {
           const live = state.sessions[ctx.params.key];

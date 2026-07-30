@@ -93,6 +93,18 @@ test('wait --say posts a chat line before waiting', async (t) => {
   assert.equal(result.code, 0);
 });
 
+test('wait --say updates the note and creates no comment', async (t) => {
+  const { cr } = await setup(t);
+  const opened = JSON.parse((await cr(['open'])).out);
+  await cr(['wait', '--timeout', '1', '--say', 'check the rounding first']);
+
+  const { loadState } = await import('../../src/state/store.js');
+  const session = (await loadState()).sessions[opened.key];
+
+  assert.equal(session.note, 'check the rounding first');
+  assert.deepEqual(session.comments, [], '--say must never create a comment');
+});
+
 test('reply and refresh drive a full round', async (t) => {
   const { cr, repo } = await setup(t);
   const opened = JSON.parse((await cr(['open'])).out);

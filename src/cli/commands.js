@@ -66,7 +66,10 @@ const HANDLERS = {
     // --say is the agent talking to the human, so it updates the note the tab
     // header shows. Posting it as a comment would send it straight back.
     if (typeof flags.say === 'string' && flags.say !== '') {
-      await request(port, 'PATCH', `/api/sessions/${key}/note`, { note: flags.say }, token);
+      const said = await request(port, 'PATCH', `/api/sessions/${key}/note`, { note: flags.say }, token);
+      // A closed session refuses the note, which is fine: the poll below is
+      // about to tell the agent the review is over.
+      if (said.status !== 409) unwrap(said);
     }
 
     const path = `/api/sessions/${key}/pending?holder=${process.pid}&timeout=${timeout}`;
