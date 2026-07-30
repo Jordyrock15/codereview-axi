@@ -77,9 +77,11 @@ main { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); mi
   padding: 8px 12px;
   border-bottom: 1px solid var(--hair);
   color: var(--mid);
+  /* Sticks within #diff, which scrolls; #bar is outside #diff so 0 is correct, not 45. */
   position: sticky;
-  top: 45px;
+  top: 0;
   background: var(--paper);
+  z-index: 1;
 }
 
 .row { display: grid; grid-template-columns: 44px 44px minmax(0, 1fr); }
