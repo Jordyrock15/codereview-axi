@@ -70,6 +70,7 @@
  * @property {'fix'|'explain'|'ignore'} verdict — What the human wants the agent to do.
  * @property {'open'|'sent'|'answered'|'resolved'|'reopened'|'stale'} status — Lifecycle position.
  * @property {{status: 'fixed'|'explained'|'skipped', body: string, at: string}|null} agentReply — The agent's response, null until replied.
+ * @property {string|null} deliveredAt — ISO timestamp of the long-poll delivery, null until delivered.
  * @property {string} createdAt — ISO timestamp.
  * @property {string} updatedAt — ISO timestamp.
  */
