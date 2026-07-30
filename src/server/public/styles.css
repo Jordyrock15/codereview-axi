@@ -1,0 +1,93 @@
+:root {
+  --paper: #0e1417;
+  --card: #172126;
+  --ink: #e7edef;
+  --mid: #8c9ba1;
+  --hair: #2a373d;
+  --accent: #d9a23f;
+  --add: #57b37c;
+  --add-bg: #16301f;
+  --del: #de7a63;
+  --del-bg: #331914;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 13px/1.5 var(--mono);
+}
+
+#bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--hair);
+  position: sticky;
+  top: 0;
+  background: var(--paper);
+  z-index: 2;
+}
+
+#note { color: var(--mid); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#counts { color: var(--mid); white-space: nowrap; }
+
+button {
+  font: inherit;
+  padding: 4px 12px;
+  border: 1px solid var(--hair);
+  background: transparent;
+  color: var(--ink);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button:disabled { color: var(--mid); cursor: default; }
+#send:not(:disabled) { background: var(--accent); border-color: var(--accent); color: #172126; }
+
+main { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); min-height: calc(100vh - 45px); }
+
+#files { border-right: 1px solid var(--hair); padding: 12px; overflow-y: auto; }
+
+#files button {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  text-align: left;
+  padding: 5px 6px;
+  color: var(--mid);
+}
+
+#files button[aria-current="true"] { background: var(--card); color: var(--ink); }
+#files .gen { opacity: 0.65; }
+#files .count { color: var(--accent); }
+
+#diff { overflow-x: auto; }
+
+.filehead {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--hair);
+  color: var(--mid);
+  position: sticky;
+  top: 45px;
+  background: var(--paper);
+}
+
+.row { display: grid; grid-template-columns: 44px 44px minmax(0, 1fr); }
+.row > .n { color: var(--mid); text-align: right; padding: 0 8px; border-right: 1px solid var(--hair); cursor: pointer; user-select: none; }
+.row > .t { padding: 0 12px; white-space: pre; }
+.row.add > .t { background: var(--add-bg); color: var(--add); }
+.row.del > .t { background: var(--del-bg); color: var(--del); }
+.row.picked > .t { box-shadow: inset 3px 0 0 var(--accent); }
+
+.expand { color: var(--mid); padding: 4px 12px; cursor: pointer; background: none; border: 0; font: inherit; }
+.large { padding: 16px; color: var(--mid); }

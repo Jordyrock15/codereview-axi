@@ -9,7 +9,8 @@ import { createHub } from './sse.js';
 import { createRouter } from './router.js';
 import { addComment, patchComment, markSent, applyReply, unsentCount } from '../state/comments.js';
 import { takeLease, releaseLease } from './lease.js';
-import { commentContext } from '../diff/context.js';
+import { commentContext, expandContext } from '../diff/context.js';
+import { shellHtml, assetResponse } from './ui.js';
 
 /**
  * @typedef {import('../types.js').Session} Session
@@ -281,6 +282,46 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
         });
         hub.publish(ctx.params.key, 'note', { note });
         return { body: { note: session.note } };
+      },
+    },
+    {
+      method: 'GET',
+      pattern: '/session/:key',
+      handler: async ({ res, params }) => {
+        const html = shellHtml(params.key);
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Content-Length': Buffer.byteLength(html),
+          'Cache-Control': 'no-store',
+        });
+        res.end(html);
+      },
+    },
+    {
+      method: 'GET',
+      pattern: '/assets/:name',
+      handler: async ({ res, params }) => {
+        const asset = await assetResponse(params.name);
+        if (asset.body === null) throw new StateError(404, 'not found');
+        res.writeHead(200, {
+          'Content-Type': asset.type,
+          'Content-Length': Buffer.byteLength(asset.body),
+          'Cache-Control': 'no-store',
+        });
+        res.end(asset.body);
+      },
+    },
+    {
+      method: 'GET',
+      pattern: '/api/sessions/:key/context',
+      handler: async (ctx) => {
+        const session = await guarded(ctx);
+        const file = ctx.query.get('file');
+        if (!file) throw new StateError(400, 'file is required');
+
+        const from = Number(ctx.query.get('from') ?? 1);
+        const to = Number(ctx.query.get('to') ?? from);
+        return { body: await expandContext(session.repo, file, from, to) };
       },
     },
   ];
