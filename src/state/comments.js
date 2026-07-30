@@ -87,6 +87,9 @@ export const patchComment = (session, id, patch, now) => {
       throw new StateError(400, 'status may only be set to resolved or reopened');
     }
     if (!['answered', 'resolved', 'reopened'].includes(comment.status)) {
+      if (comment.status === 'stale') {
+        throw new StateError(409, `comment ${id} is stale, its code no longer exists`);
+      }
       throw new StateError(409, `comment ${id} is ${comment.status}, the agent has not answered it`);
     }
     comment.status = /** @type {Comment['status']} */ (patch.status);

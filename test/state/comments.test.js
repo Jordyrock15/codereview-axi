@@ -93,6 +93,17 @@ test('patchComment refuses to resolve a comment the agent has not answered', () 
   });
 });
 
+test('patchComment names staleness rather than the agent when refusing a stale comment', () => {
+  const s = session();
+  addComment(s, lineInput(), NOW);
+  s.comments[0].status = 'stale';
+  assert.throws(() => patchComment(s, 1, { status: 'resolved' }, NOW), (/** @type {any} */ err) => {
+    assert.equal(err.status, 409);
+    assert.equal(err.message, 'comment 1 is stale, its code no longer exists');
+    return true;
+  });
+});
+
 test('patchComment 404s on an unknown id', () => {
   assert.throws(() => patchComment(session(), 99, { body: 'x' }, NOW), (/** @type {any} */ err) => {
     assert.equal(err.status, 404);
