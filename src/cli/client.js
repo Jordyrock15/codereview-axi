@@ -89,9 +89,7 @@ export const ensureServer = async () => {
 
   if (recorded) {
     const live = await probe(recorded.port);
-    // Compare against server.json's version, not the live probe's: the file
-    // is the record we can act on, and only it changes when a caller edits it.
-    if (live.ok && recorded.version === pkg.version) return recorded.port;
+    if (live.ok && live.version === pkg.version) return recorded.port;
     if (live.ok) {
       await shutdown(recorded.port, live.pid ?? recorded.pid);
       await new Promise((resolve) => setTimeout(resolve, 200));

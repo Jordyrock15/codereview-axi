@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, mkdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import http from 'node:http';
+import { once } from 'node:events';
 
 /** @param {import('node:test').TestContext} t */
 const withHome = async (t) => {
@@ -58,20 +60,30 @@ test('ensureServer reuses a live server at the recorded version', async (t) => {
 
 test('ensureServer replaces a server running an older version', async (t) => {
   const home = await withHome(t);
-  const { startServer } = await import('../../src/server/index.js');
   const { ensureServer, shutdown, probe } = await import('../../src/cli/client.js');
 
-  const server = await startServer({ port: 45431 });
+  // A stand-in reporting an old version: a real server always reports its own
+  // current one, so it can never exercise the replacement path.
+  const stale = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, version: '0.0.1', pid: 999999 }));
+  });
+  stale.listen(45431, '127.0.0.1');
+  await once(stale, 'listening');
+  t.after(() => new Promise((resolve) => stale.close(resolve)));
 
-  const recorded = JSON.parse(await readFile(path.join(home, 'server.json'), 'utf8'));
-  await writeFile(path.join(home, 'server.json'), JSON.stringify({ ...recorded, version: '0.0.1' }));
+  await mkdir(home, { recursive: true });
+  await writeFile(path.join(home, 'server.json'), JSON.stringify({ pid: 999999, port: 45431, version: '0.0.1' }));
 
   const port = await ensureServer();
   const info = JSON.parse(await readFile(path.join(home, 'server.json'), 'utf8'));
-  t.after(async () => { await shutdown(port, info.pid).catch(() => {}); await server.close().catch(() => {}); });
+  t.after(() => shutdown(port, info.pid).catch(() => {}));
 
-  assert.notEqual(info.pid, recorded.pid, 'the stale server was replaced');
-  assert.equal((await probe(port)).ok, true);
+  assert.notEqual(port, 45431, 'a fresh server was started rather than the stale one reused');
+
+  const health = await probe(port);
+  assert.equal(health.ok, true);
+  assert.notEqual(health.version, '0.0.1', 'the replacement runs the current version');
 });
 
 test('ensureServer ignores a stale server.json pointing at a dead port', async (t) => {
