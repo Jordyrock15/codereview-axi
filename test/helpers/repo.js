@@ -8,7 +8,7 @@ const exec = promisify(execFile);
 
 /**
  * Creates a throwaway git repo with one commit, for tests.
- * @param {Record<string, string>} files, path to contents, committed as the base.
+ * @param {Record<string, string>} files: path to contents, committed as the base.
  */
 export const makeRepo = async (files = {}) => {
   const dir = await mkdtemp(path.join(tmpdir(), 'cr-repo-'));

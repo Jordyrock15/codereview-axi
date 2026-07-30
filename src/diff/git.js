@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readFile } from 'node:fs/promises';
+import { readFile, access } from 'node:fs/promises';
 import path from 'node:path';
 
 const exec = promisify(execFile);
@@ -23,10 +23,16 @@ const git = async (cwd, args) => {
  */
 export const toplevel = async (cwd) => {
   try {
+    await access(cwd);
+  } catch {
+    throw new Error(`no such directory: ${cwd}`);
+  }
+
+  try {
     return (await git(cwd, ['rev-parse', '--show-toplevel'])).trim();
   } catch (/** @type {any} */ err) {
-    // A non-zero exit means "not a repo"; a spawn failure means
-    // something is wrong with the environment, not the path.
+    // cwd exists, so a spawn ENOENT can only be git itself missing:
+    // the error carries nothing that separates the two causes.
     if (err.code === 'ENOENT') throw new Error('git not found on PATH');
     return null;
   }
