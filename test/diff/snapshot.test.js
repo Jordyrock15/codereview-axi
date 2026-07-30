@@ -22,6 +22,33 @@ test('merges a partly staged file into one entry', async (t) => {
   assert.equal(snapshot.totals.files, 1);
 });
 
+test('counts a file staged then edited again once, not twice', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.write('a.js', 'two\n');
+  await repo.run(['add', 'a.js']);
+  await repo.write('a.js', 'three\n');
+
+  const snapshot = await buildSnapshot(repo.dir);
+  const file = find(snapshot, 'a.js');
+
+  assert.equal(file.added, 1, 'HEAD vs worktree is one added line, not one per staging step');
+  assert.equal(file.removed, 1);
+  assert.equal(file.hunks.length, 1, 'no contradictory second hunk');
+  assert.equal(snapshot.totals.added, 1);
+});
+
+test('reports no change for a staged edit reverted in the working tree', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.write('a.js', 'two\n');
+  await repo.run(['add', 'a.js']);
+  await repo.write('a.js', 'one\n');
+
+  const snapshot = await buildSnapshot(repo.dir);
+  assert.equal(find(snapshot, 'a.js'), undefined, 'net zero change means the file is not in the diff');
+});
+
 test('includes untracked files as all-add', async (t) => {
   const repo = await makeRepo({ 'a.js': 'one\n' });
   t.after(repo.cleanup);

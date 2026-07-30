@@ -1,10 +1,9 @@
 import { parseUnifiedDiff } from './parse.js';
-import { diffStaged, diffUnstaged, untrackedPaths, readWorkingFile, isBinaryPath } from './git.js';
+import { diffWorking, untrackedPaths, readWorkingFile, isBinaryPath } from './git.js';
 
 /**
  * @typedef {import('../types.js').Snapshot} Snapshot
  * @typedef {import('../types.js').SnapshotFile} SnapshotFile
- * @typedef {import('../types.js').DiffFile} DiffFile
  */
 
 export const LARGE_FILE_LINES = 1500;
@@ -19,23 +18,6 @@ const GENERATED = [
 
 /** @param {string} path @returns {boolean} */
 const isGenerated = (path) => GENERATED.some((re) => re.test(path));
-
-/**
- * Later files win on hunks, but line counts are taken from the union so a
- * partly staged file reports the whole change rather than half of it.
- * @param {DiffFile} base
- * @param {DiffFile} extra
- * @returns {DiffFile}
- */
-const mergeFile = (base, extra) => ({
-  ...base,
-  status: base.status === 'modified' ? extra.status : base.status,
-  oldPath: base.oldPath ?? extra.oldPath,
-  binary: base.binary || extra.binary,
-  added: base.added + extra.added,
-  removed: base.removed + extra.removed,
-  hunks: [...base.hunks, ...extra.hunks],
-});
 
 /**
  * @param {string} repo
@@ -78,21 +60,13 @@ const untrackedFile = async (repo, relPath) => {
  * @returns {Promise<Snapshot>}
  */
 export const buildSnapshot = async (repo) => {
-  const [staged, unstaged, untracked] = await Promise.all([
-    diffStaged(repo),
-    diffUnstaged(repo),
+  const [working, untracked] = await Promise.all([
+    diffWorking(repo),
     untrackedPaths(repo),
   ]);
 
-  /** @type {Map<string, DiffFile>} */
-  const byPath = new Map();
-  for (const file of [...parseUnifiedDiff(staged), ...parseUnifiedDiff(unstaged)]) {
-    const existing = byPath.get(file.path);
-    byPath.set(file.path, existing ? mergeFile(existing, file) : file);
-  }
-
   /** @type {SnapshotFile[]} */
-  const files = [...byPath.values()].map((file) => ({
+  const files = parseUnifiedDiff(working).map((file) => ({
     ...file,
     tags: [
       ...(file.binary ? ['binary'] : []),

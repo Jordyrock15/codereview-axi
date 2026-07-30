@@ -40,11 +40,22 @@ export const toplevel = async (cwd) => {
 
 const DIFF_FLAGS = ['--no-color', '--no-ext-diff', '-M', '--find-renames', '-U3'];
 
-/** @param {string} repo @returns {Promise<string>} */
-export const diffUnstaged = (repo) => git(repo, ['diff', ...DIFF_FLAGS]);
+const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
-/** @param {string} repo @returns {Promise<string>} */
-export const diffStaged = (repo) => git(repo, ['diff', '--staged', ...DIFF_FLAGS]);
+/**
+ * HEAD against the working tree: staged and unstaged changes in one diff.
+ * @param {string} repo
+ * @returns {Promise<string>}
+ */
+export const diffWorking = async (repo) => {
+  try {
+    await git(repo, ['rev-parse', '--verify', 'HEAD']);
+  } catch {
+    // An unborn HEAD has nothing to diff against, so use the empty tree.
+    return git(repo, ['diff', EMPTY_TREE, ...DIFF_FLAGS]);
+  }
+  return git(repo, ['diff', 'HEAD', ...DIFF_FLAGS]);
+};
 
 /** @param {string} repo @returns {Promise<string[]>} */
 export const untrackedPaths = async (repo) => {

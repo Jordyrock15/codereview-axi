@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { makeRepo } from '../helpers/repo.js';
-import { toplevel, diffUnstaged, diffStaged, untrackedPaths, readWorkingFile } from '../../src/diff/git.js';
+import { toplevel, diffWorking, untrackedPaths, readWorkingFile } from '../../src/diff/git.js';
 
 test('toplevel returns the worktree root', async (t) => {
   const repo = await makeRepo({ 'a.js': 'const a = 1;\n' });
@@ -20,24 +20,46 @@ test('toplevel rejects with a clear message for a non-existent directory', async
   await assert.rejects(() => toplevel('/no/such/directory/at/all'), /no such directory/);
 });
 
-test('diffUnstaged sees working tree edits', async (t) => {
+test('diffWorking sees working tree edits', async (t) => {
   const repo = await makeRepo({ 'a.js': 'one\n' });
   t.after(repo.cleanup);
   await repo.write('a.js', 'two\n');
-  const out = await diffUnstaged(repo.dir);
+  const out = await diffWorking(repo.dir);
   assert.match(out, /diff --git a\/a\.js b\/a\.js/);
   assert.match(out, /\+two/);
 });
 
-test('diffStaged sees only staged edits', async (t) => {
+test('diffWorking sees staged edits too', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.write('a.js', 'two\n');
+  await repo.run(['add', 'a.js']);
+
+  assert.match(await diffWorking(repo.dir), /\+two/);
+});
+
+test('diffWorking reports one diff when a file is staged then edited again', async (t) => {
   const repo = await makeRepo({ 'a.js': 'one\n' });
   t.after(repo.cleanup);
   await repo.write('a.js', 'two\n');
   await repo.run(['add', 'a.js']);
   await repo.write('a.js', 'three\n');
 
-  assert.match(await diffStaged(repo.dir), /\+two/);
-  assert.match(await diffUnstaged(repo.dir), /\+three/);
+  const out = await diffWorking(repo.dir);
+  assert.equal((out.match(/^diff --git/gm) ?? []).length, 1, 'one entry for one file');
+  assert.match(out, /-one/);
+  assert.match(out, /\+three/);
+  assert.equal(/\+two/.test(out), false, 'the intermediate staged content is not part of HEAD vs worktree');
+});
+
+test('diffWorking resolves rather than rejects in a repo with no commits', async (t) => {
+  const repo = await makeRepo({});
+  t.after(repo.cleanup);
+  await repo.write('a.js', 'one\n');
+  await repo.run(['add', 'a.js']);
+
+  const out = await diffWorking(repo.dir);
+  assert.match(out, /\+one/);
 });
 
 test('untrackedPaths lists new files and respects gitignore', async (t) => {
