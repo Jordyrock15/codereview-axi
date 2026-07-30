@@ -12,14 +12,7 @@ export const createHub = () => {
    * @returns {() => void}
    */
   const subscribe = (key, res) => {
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    });
     const set = byKey.get(key) ?? new Set();
-    byKey.set(key, set);
 
     const off = () => {
       set.delete(res);
@@ -27,12 +20,20 @@ export const createHub = () => {
     };
 
     try {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      });
       res.write(': connected\n\n');
-      set.add(res);
     } catch {
-      // Dead on arrival: never add it, so publish and count never see it.
+      // Dead on arrival: register nothing, so the map cannot keep an empty set.
+      return off;
     }
 
+    set.add(res);
+    byKey.set(key, set);
     return off;
   };
 

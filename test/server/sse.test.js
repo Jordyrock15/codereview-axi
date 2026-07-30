@@ -75,6 +75,29 @@ test('a subscriber that throws on write is dropped rather than breaking publish'
   assert.equal(hub.count('k1'), 1);
 });
 
+test('a response whose writeHead throws is handled without breaking subscribe', () => {
+  const hub = createHub();
+  const res = fakeRes();
+  res.writeHead = () => { throw new Error('headers already sent'); };
+
+  assert.doesNotThrow(() => hub.subscribe('k1', res));
+  assert.equal(hub.count('k1'), 0);
+  assert.equal(hub.publish('k1', 'refreshed', {}), 0);
+});
+
+test('a dead-on-arrival subscriber on a fresh key leaves the key usable for later subscribers', () => {
+  const hub = createHub();
+  const dead = fakeRes();
+  dead.write = () => { throw new Error('socket gone'); };
+  hub.subscribe('k1', dead);
+
+  assert.equal(hub.publish('k1', 'refreshed', {}), 0);
+
+  const live = fakeRes();
+  hub.subscribe('k1', live);
+  assert.equal(hub.publish('k1', 'refreshed', {}), 1);
+});
+
 test('multi-line JSON never breaks framing', () => {
   const hub = createHub();
   const res = fakeRes();
