@@ -272,7 +272,9 @@ const renderRow = (file, line0) => {
     const line = Number(side === 'new' ? line0.newLine : line0.oldLine);
     if (!Number.isInteger(line) || line === 0) return;
 
-    if (event.shiftKey && picking.start !== null && picking.file === file.path) {
+    // The side must match too: the old and new gutters are adjacent columns, so
+    // extending across them would build a quote for code the human never chose.
+    if (event.shiftKey && picking.start !== null && picking.file === file.path && side === picking.side) {
       picking.end = line;
     } else {
       picking.file = file.path;
@@ -355,8 +357,12 @@ const send = async () => {
 
 /** @returns {Promise<void>} */
 const done = async () => {
-  await api('/close', { method: 'POST', body: JSON.stringify({ closedBy: 'human' }) });
+  const res = await api('/close', { method: 'POST', body: JSON.stringify({ closedBy: 'human' }) });
   await load();
+
+  // Never claim the session closed unless the server agreed.
+  if (!res.ok) return;
+
   /** @type {HTMLButtonElement} */ ($('send')).disabled = true;
   /** @type {HTMLButtonElement} */ ($('done')).disabled = true;
   $('note').textContent = 'Session closed. You can close this tab.';
