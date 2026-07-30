@@ -3,6 +3,7 @@
  * @typedef {import('../../types.js').SnapshotFile} SnapshotFile
  * @typedef {import('../../types.js').Hunk} Hunk
  * @typedef {import('../../types.js').DiffLine} DiffLine
+ * @typedef {import('../../types.js').Comment} Comment
  */
 
 const key = document.body.dataset.key;
@@ -24,7 +25,9 @@ const api = (path, options = {}) => fetch(`/api/sessions/${key}${path}`, {
   headers: { 'x-cr-token': token, ...(options.body ? { 'Content-Type': 'application/json' } : {}) },
 });
 
-const LARGE = Number(document.body.dataset.large ?? 1500);
+// A junk or missing dataset value must not silently disable the large-file guard.
+const parsedLarge = Number(document.body.dataset.large ?? 1500);
+const LARGE = Number.isFinite(parsedLarge) && parsedLarge > 0 ? parsedLarge : 1500;
 
 /** @type {{session: Session|null, current: string|null}} */
 const view = { session: null, current: null };
@@ -43,6 +46,28 @@ const el = (tag, className, text) => {
   if (className) node.className = className;
   if (text !== undefined) node.textContent = text;
   return node;
+};
+
+/** @type {{file: string|null, side: 'old'|'new', start: number|null, end: number|null}} */
+const picking = { file: null, side: 'new', start: null, end: null };
+
+/** @returns {void} */
+const clearPick = () => {
+  picking.file = null;
+  picking.start = null;
+  picking.end = null;
+  document.querySelector('.thread.composer')?.remove();
+  for (const row of document.querySelectorAll('.row.picked')) row.classList.remove('picked');
+};
+
+/** @returns {void} */
+const paintPick = () => {
+  for (const row of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.row'))) {
+    const line = Number(row.dataset[picking.side === 'new' ? 'newLine' : 'oldLine'] || 0);
+    const inRange = picking.start !== null && line >= Math.min(picking.start, picking.end ?? picking.start)
+      && line <= Math.max(picking.start, picking.end ?? picking.start);
+    row.classList.toggle('picked', inRange && row.dataset.file === picking.file);
+  }
 };
 
 /** @returns {void} */
@@ -76,20 +101,192 @@ const renderFiles = () => {
 };
 
 /**
+ * The exact source text of the selected lines: this is what re-anchoring
+ * later relies on to find the comment again after the code has moved.
  * @param {SnapshotFile} file
- * @param {DiffLine} line
+ * @returns {string}
+ */
+const quoteFor = (file) => {
+  const from = Math.min(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
+  const to = Math.max(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
+  /** @type {string[]} */
+  const texts = [];
+
+  for (const hunk of file.hunks) {
+    for (const l of hunk.lines) {
+      const number = picking.side === 'new' ? l.newLine : l.oldLine;
+      if (number !== null && number >= from && number <= to) texts.push(l.text);
+    }
+  }
+  return texts.join('\n');
+};
+
+/**
+ * @param {SnapshotFile} file
+ * @param {HTMLElement} afterRow
+ * @returns {void}
+ */
+const openComposer = (file, afterRow) => {
+  document.querySelector('.thread.composer')?.remove();
+
+  const box = el('div', 'thread composer');
+  const from = Math.min(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
+  const to = Math.max(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
+  box.append(el('div', 'who', `New comment · ${file.path} · ${from === to ? `line ${from}` : `lines ${from}-${to}`}`));
+
+  const text = document.createElement('textarea');
+  text.placeholder = 'What is wrong, and what should change';
+  box.append(text);
+
+  let verdict = 'fix';
+  const verdicts = el('div', 'verdicts');
+  for (const option of ['fix', 'explain', 'ignore']) {
+    const button = el('button', '', option);
+    button.setAttribute('aria-pressed', String(option === verdict));
+    button.addEventListener('click', () => {
+      verdict = option;
+      for (const other of verdicts.children) other.setAttribute('aria-pressed', String(other.textContent === option));
+    });
+    verdicts.append(button);
+  }
+  box.append(verdicts);
+
+  const actions = el('div', 'actions');
+  const save = /** @type {HTMLButtonElement} */ (el('button', '', 'Save'));
+  const cancel = el('button', '', 'Cancel');
+
+  save.addEventListener('click', async () => {
+    if (text.value.trim() === '') { text.focus(); return; }
+    save.disabled = true;
+
+    const res = await api('/comments', {
+      method: 'POST',
+      body: JSON.stringify({
+        scope: 'line', file: file.path, side: picking.side,
+        startLine: from, endLine: to, quote: quoteFor(file), body: text.value, verdict,
+      }),
+    });
+
+    if (!res.ok) { save.disabled = false; return; }
+    box.remove();
+    clearPick();
+    await load();
+  });
+
+  cancel.addEventListener('click', () => { box.remove(); clearPick(); });
+  actions.append(save, cancel);
+  box.append(actions);
+
+  afterRow.after(box);
+  text.focus();
+};
+
+/**
+ * @param {Comment} comment
  * @returns {HTMLElement}
  */
-const renderRow = (file, line) => {
-  const row = el('div', `row ${line.kind}`);
-  const oldNo = el('span', 'n', line.oldLine === null ? '' : String(line.oldLine));
-  const newNo = el('span', 'n', line.newLine === null ? '' : String(line.newLine));
-  row.append(oldNo, newNo, el('span', 't', line.text));
+const threadFor = (comment) => {
+  const box = el('div', `thread ${comment.status}`);
 
-  // Task 20 attaches selection and commenting to these two cells.
+  if (comment.status === 'answered' || comment.status === 'resolved') {
+    box.append(el('span', '', `${comment.status === 'resolved' ? 'Resolved' : 'Answered'} · ${comment.agentReply?.status ?? ''}: ${comment.agentReply?.body ?? ''}`));
+    const actions = el('span', 'actions');
+    const reopen = el('button', '', 'Reopen');
+    reopen.addEventListener('click', () => patch(comment.id, { status: 'reopened' }));
+    actions.append(reopen);
+
+    if (comment.status === 'answered') {
+      const resolve = el('button', '', 'Resolve');
+      resolve.addEventListener('click', () => patch(comment.id, { status: 'resolved' }));
+      actions.append(resolve);
+    }
+    box.append(actions);
+    return box;
+  }
+
+  box.append(el('div', 'who', `${comment.status} · ${comment.verdict}`));
+  box.append(el('div', 'body', comment.body));
+  if (comment.status === 'stale') box.append(el('div', 'was', `was: ${comment.quote}`));
+  return box;
+};
+
+/**
+ * @param {number} id
+ * @param {{status: string}} body
+ * @returns {Promise<void>}
+ */
+const patch = async (id, body) => {
+  await api(`/comments/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+  await load();
+};
+
+/**
+ * @param {HTMLElement} pane
+ * @param {SnapshotFile} file
+ * @returns {void}
+ */
+const renderThreadsImpl = (pane, file) => {
+  for (const comment of view.session?.comments ?? []) {
+    if (comment.file !== file.path) continue;
+
+    if (comment.status === 'stale' || comment.startLine === null) {
+      pane.append(threadFor(comment));
+      continue;
+    }
+
+    const rows = [.../** @type {NodeListOf<HTMLElement>} */ (pane.querySelectorAll('.row'))];
+    const anchor = rows.reverse().find((row) => (
+      Number(row.dataset[comment.side === 'new' ? 'newLine' : 'oldLine'] || 0) === comment.endLine
+    ));
+
+    if (anchor) {
+      anchor.after(threadFor(comment));
+    } else {
+      pane.append(threadFor(comment));
+    }
+  }
+
+  for (const comment of (view.session?.comments ?? []).filter((c) => c.scope === 'session')) {
+    const box = threadFor(comment);
+    box.classList.add('session-scope');
+    pane.append(box);
+  }
+};
+
+/**
+ * @param {SnapshotFile} file
+ * @param {DiffLine} line0
+ * @returns {HTMLElement}
+ */
+const renderRow = (file, line0) => {
+  const row = el('div', `row ${line0.kind}`);
+  const oldNo = el('span', 'n', line0.oldLine === null ? '' : String(line0.oldLine));
+  const newNo = el('span', 'n', line0.newLine === null ? '' : String(line0.newLine));
+  row.append(oldNo, newNo, el('span', 't', line0.text));
+
   row.dataset.file = file.path;
-  row.dataset.newLine = String(line.newLine ?? '');
-  row.dataset.oldLine = String(line.oldLine ?? '');
+  row.dataset.newLine = String(line0.newLine ?? '');
+  row.dataset.oldLine = String(line0.oldLine ?? '');
+
+  const pick = (/** @type {'old'|'new'} */ side) => (/** @type {MouseEvent} */ event) => {
+    const line = Number(side === 'new' ? line0.newLine : line0.oldLine);
+    if (!Number.isInteger(line) || line === 0) return;
+
+    if (event.shiftKey && picking.start !== null && picking.file === file.path) {
+      picking.end = line;
+    } else {
+      picking.file = file.path;
+      picking.side = side;
+      picking.start = line;
+      picking.end = line;
+    }
+    paintPick();
+    openComposer(file, row);
+  };
+
+  oldNo.addEventListener('click', pick('old'));
+  newNo.addEventListener('click', pick('new'));
+
   return row;
 };
 
@@ -128,7 +325,7 @@ const renderDiff = () => {
     for (const line of hunk.lines) pane.append(renderRow(file, line));
   }
 
-  renderThreads(pane, file);
+  renderThreadsImpl(pane, file);
 };
 
 /**
@@ -150,13 +347,32 @@ const expandAbove = async (file, hunk, pane, anchor) => {
   anchor.replaceWith(...rows);
 };
 
-/**
- * Filled in by Task 20.
- * @param {HTMLElement} pane
- * @param {SnapshotFile} file
- * @returns {void}
- */
-const renderThreads = (pane, file) => {};
+/** @returns {Promise<void>} */
+const send = async () => {
+  const res = await api('/send', { method: 'POST', body: JSON.stringify({}) });
+  if (res.ok) await load();
+};
+
+/** @returns {Promise<void>} */
+const done = async () => {
+  await api('/close', { method: 'POST', body: JSON.stringify({ closedBy: 'human' }) });
+  await load();
+  /** @type {HTMLButtonElement} */ ($('send')).disabled = true;
+  /** @type {HTMLButtonElement} */ ($('done')).disabled = true;
+  $('note').textContent = 'Session closed. You can close this tab.';
+};
+
+/** @returns {void} */
+const subscribe = () => {
+  const badge = $('stream');
+  const source = new EventSource(`/api/sessions/${key}/stream?t=${encodeURIComponent(token)}`);
+
+  source.addEventListener('open', () => { badge.textContent = 'connected'; badge.dataset.state = 'up'; });
+  source.addEventListener('error', () => { badge.textContent = 'disconnected'; badge.dataset.state = 'down'; });
+  for (const name of ['comment', 'sent', 'refreshed', 'closed', 'note']) {
+    source.addEventListener(name, () => { void load(); });
+  }
+};
 
 /** @returns {Promise<void>} */
 const load = async () => {
@@ -177,4 +393,9 @@ const load = async () => {
   counts();
 };
 
+$('send').addEventListener('click', send);
+$('done').addEventListener('click', done);
+document.addEventListener('keydown', (event) => { if (event.key === 'Escape') clearPick(); });
+
+subscribe();
 await load();

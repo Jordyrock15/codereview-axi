@@ -26,7 +26,7 @@ export const startApp = async (t, options = {}) => {
   const server = http.createServer(app.handler);
   server.listen(port, '127.0.0.1');
   await once(server, 'listening');
-  t.after(() => new Promise((resolve) => server.close(resolve)));
+  t.after(() => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }));
 
   const base = `http://127.0.0.1:${port}`;
 

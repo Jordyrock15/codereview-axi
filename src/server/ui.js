@@ -41,7 +41,8 @@ export const shellHtml = (key) => `<!doctype html>
  * @returns {Promise<{status: number, type: string, body: string|null}>}
  */
 export const assetResponse = async (name) => {
-  const ext = name.slice(name.lastIndexOf('.'));
+  const dot = name.lastIndexOf('.');
+  const ext = dot === -1 ? '' : name.slice(dot);
   const type = TYPES[ext];
 
   if (!type || name.includes('/') || name.includes('\\') || name.includes('..')) {

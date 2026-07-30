@@ -91,3 +91,31 @@ main { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); mi
 
 .expand { color: var(--mid); padding: 4px 12px; cursor: pointer; background: none; border: 0; font: inherit; }
 .large { padding: 16px; color: var(--mid); }
+
+.thread {
+  margin: 8px 12px 12px 88px;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--paper));
+  padding: 10px 12px;
+}
+
+.thread.answered { border-color: var(--hair); background: var(--card); display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.thread.stale { border-color: var(--del); }
+.thread .who { color: var(--mid); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+.thread .was { color: var(--mid); white-space: pre-wrap; }
+
+.thread textarea {
+  width: 100%;
+  min-height: 60px;
+  font: inherit;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--hair);
+  padding: 6px;
+  resize: vertical;
+}
+
+.verdicts { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.verdicts button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #172126; }
+.thread .actions { display: flex; gap: 6px; margin-top: 8px; }
+#stream[data-state="down"] { color: var(--del); }
