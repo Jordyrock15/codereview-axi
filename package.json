@@ -1,0 +1,16 @@
+{
+  "name": "codereview-axi",
+  "version": "0.1.0",
+  "description": "Local browser review session over the git working diff, annotations fed back to your coding agent",
+  "type": "module",
+  "bin": { "cr": "bin/cr.js" },
+  "engines": { "node": ">=20" },
+  "files": ["bin", "src", "README.md"],
+  "scripts": {
+    "test": "node --test",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test"
+  },
+  "license": "MIT",
+  "devDependencies": { "typescript": "^5.6.0", "@types/node": "^20.0.0" }
+}
