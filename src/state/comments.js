@@ -125,6 +125,9 @@ export const markSent = (session, now) => {
   const at = new Date(now).toISOString();
   for (const comment of sending) {
     comment.status = 'sent';
+    // Clear the stamp: at-most-once is per round, so a reopened comment must be
+    // deliverable again or the human's disagreement never reaches the agent.
+    comment.deliveredAt = null;
     comment.updatedAt = at;
   }
   session.updatedAt = at;

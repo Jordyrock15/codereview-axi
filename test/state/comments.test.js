@@ -125,6 +125,20 @@ test('markSent moves open and reopened comments to sent and returns them', () =>
   assert.equal(s.comments[0].status, 'sent');
 });
 
+test('markSent clears deliveredAt so a reopened comment is delivered again', () => {
+  const s = session();
+  addComment(s, lineInput(), NOW);
+  markSent(s, NOW);
+  s.comments[0].deliveredAt = new Date(NOW).toISOString();
+  applyReply(s, 1, { status: 'fixed', body: 'done' }, NOW);
+  patchComment(s, 1, { status: 'reopened' }, NOW);
+
+  markSent(s, NOW + 10);
+
+  assert.equal(s.comments[0].status, 'sent');
+  assert.equal(s.comments[0].deliveredAt, null, 'a resent comment must be deliverable again');
+});
+
 test('markSent returns an empty array when nothing is open', () => {
   assert.deepEqual(markSent(session(), NOW), []);
 });
