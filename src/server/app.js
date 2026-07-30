@@ -4,7 +4,7 @@ import { mutateState } from '../state/store.js';
 import { openOrReuse, closeSession, reapSessions } from '../state/sessions.js';
 import { reanchor } from '../state/anchor.js';
 import { StateError } from '../state/errors.js';
-import { guard } from './security.js';
+import { guard, checkOrigin } from './security.js';
 import { createHub } from './sse.js';
 import { createRouter } from './router.js';
 
@@ -40,14 +40,25 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
     return /** @type {Session} */ (session);
   });
 
+  /**
+   * A closed session must stay readable (the browser shows its final state)
+   * but must not accept further mutation.
+   * @param {Session} session
+   * @returns {Session}
+   */
+  const requireOpen = (session) => {
+    if (session.status !== 'open') throw new StateError(409, 'session is closed');
+    return session;
+  };
+
   /** @type {import('./router.js').Route[]} */
   const routes = [
     {
       method: 'POST',
       pattern: '/api/sessions',
       handler: async ({ req, body }) => {
-        const verdict = guard({ headers: req.headers, url: req.url, port, session: /** @type {Session} */ ({ token: '' }) });
-        if (verdict.ok === false && verdict.status === 403) throw new StateError(403, verdict.message);
+        const verdict = checkOrigin({ headers: req.headers, port });
+        if (!verdict.ok) throw new StateError(verdict.status, verdict.message);
 
         const requested = String(body?.repo ?? process.cwd());
         const root = await toplevel(requested);
@@ -88,7 +99,7 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
       method: 'POST',
       pattern: '/api/sessions/:key/refresh',
       handler: async (ctx) => {
-        const session = await guarded(ctx);
+        const session = requireOpen(await guarded(ctx));
         const snapshot = await buildSnapshot(session.repo);
         const at = now();
 
@@ -108,7 +119,7 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
       method: 'POST',
       pattern: '/api/sessions/:key/close',
       handler: async (ctx) => {
-        await guarded(ctx);
+        requireOpen(await guarded(ctx));
         const closedBy = ctx.body?.closedBy ?? 'agent';
         if (!['human', 'agent'].includes(closedBy)) throw new StateError(400, 'closedBy must be human or agent');
 

@@ -140,6 +140,46 @@ test('a request with a foreign Host is refused even with a valid token', async (
   assert.equal(status, 403);
 });
 
+test('refresh on a closed session is refused and leaves its snapshot untouched', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.write('a.js', 'two\n');
+
+  const { call } = await startApp(t);
+  const { key, token } = (await call('POST', '/api/sessions', { repo: repo.dir, note: 'n' })).json;
+
+  await call('POST', `/api/sessions/${key}/close?t=${token}`, { closedBy: 'human' });
+  const before = (await call('GET', `/api/sessions/${key}?t=${token}`)).json;
+
+  await repo.write('a.js', 'three\n');
+  const res = await call('POST', `/api/sessions/${key}/refresh?t=${token}`);
+  assert.equal(res.status, 409);
+
+  const after = (await call('GET', `/api/sessions/${key}?t=${token}`)).json;
+  assert.equal(after.snapshotAt, before.snapshotAt);
+});
+
+test('POST /api/sessions from a foreign Host is refused', async (t) => {
+  const { port } = await startApp(t);
+
+  const status = await new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        host: '127.0.0.1',
+        port,
+        path: '/api/sessions',
+        method: 'POST',
+        headers: { Host: 'evil.example.com', 'Content-Type': 'application/json' },
+      },
+      (res) => { res.resume(); resolve(res.statusCode ?? 0); },
+    );
+    req.on('error', reject);
+    req.end(JSON.stringify({ repo: '/', note: '' }));
+  });
+
+  assert.equal(status, 403);
+});
+
 test('creating a session reaps sessions abandoned for over a day', async (t) => {
   const repo = await makeRepo({ 'a.js': 'one\n' });
   t.after(repo.cleanup);
