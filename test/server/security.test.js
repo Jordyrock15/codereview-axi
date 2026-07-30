@@ -67,3 +67,14 @@ test('rejects with 404 when the session does not exist', () => {
   const result = call({ session: null });
   assert.equal(result.status, 404);
 });
+
+test('a malformed request target denies rather than throwing', () => {
+  const result = call({ url: 'http://[invalid' });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 401);
+});
+
+test('a malformed request target does not stop a valid header token', () => {
+  const result = call({ url: 'http://[invalid', headers: { host: '127.0.0.1:4390', 'x-cr-token': session.token } });
+  assert.equal(result.ok, true);
+});

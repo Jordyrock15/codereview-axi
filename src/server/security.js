@@ -24,6 +24,20 @@ const sameSecret = (a, b) => {
 };
 
 /**
+ * A malformed request target must deny, never throw out of the guard.
+ * @param {string} url
+ * @param {string} host
+ * @returns {string}
+ */
+const queryToken = (url, host) => {
+  try {
+    return new URL(url, `http://${host}`).searchParams.get('t') ?? '';
+  } catch {
+    return '';
+  }
+};
+
+/**
  * Gates every API request: session must exist, Host must be loopback on our
  * port, any Origin must match, and the token must be exact.
  * @param {{headers: Record<string, string|string[]|undefined>, url: string, port: number, session: Session|null}} input
@@ -44,8 +58,7 @@ export const guard = ({ headers, url, port, session }) => {
 
   const header = headers['x-cr-token'];
   const fromHeader = typeof header === 'string' ? header : '';
-  const fromQuery = new URL(url, `http://${host}`).searchParams.get('t') ?? '';
-  const token = fromHeader !== '' ? fromHeader : fromQuery;
+  const token = fromHeader !== '' ? fromHeader : queryToken(url, host);
 
   if (token === '' || !sameSecret(token, session.token)) return deny(401, 'bad or missing token');
 
