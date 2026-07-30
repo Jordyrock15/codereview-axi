@@ -119,3 +119,8 @@ main { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); mi
 .verdicts button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #172126; }
 .thread .actions { display: flex; gap: 6px; margin-top: 8px; }
 #stream[data-state="down"] { color: var(--del); }
+
+.tok-comment { color: var(--mid); font-style: italic; }
+.tok-string { color: #8fc9a8; }
+.tok-number { color: #d9a23f; }
+.tok-keyword { color: #7fb2d9; }

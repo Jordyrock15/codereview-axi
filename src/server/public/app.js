@@ -6,6 +6,8 @@
  * @typedef {import('../../types.js').Comment} Comment
  */
 
+import { highlight } from './highlight.js';
+
 const key = document.body.dataset.key;
 const token = new URLSearchParams(location.search).get('t') ?? '';
 
@@ -262,7 +264,9 @@ const renderRow = (file, line0) => {
   const row = el('div', `row ${line0.kind}`);
   const oldNo = el('span', 'n', line0.oldLine === null ? '' : String(line0.oldLine));
   const newNo = el('span', 'n', line0.newLine === null ? '' : String(line0.newLine));
-  row.append(oldNo, newNo, el('span', 't', line0.text));
+  const cell = el('span', 't');
+  cell.innerHTML = highlight(line0.text);
+  row.append(oldNo, newNo, cell);
 
   row.dataset.file = file.path;
   row.dataset.newLine = String(line0.newLine ?? '');
