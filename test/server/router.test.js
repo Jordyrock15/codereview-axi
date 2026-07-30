@@ -124,6 +124,23 @@ test('a handler that returns nothing is treated as 204', async (t) => {
   assert.equal((await call('POST', '/api/void')).status, 204);
 });
 
+test('a malformed percent-escape in a parameter gives 400 and does not crash', async (t) => {
+  const call = await serve([
+    { method: 'GET', pattern: '/api/s/:key', handler: async ({ params }) => ({ body: params }) },
+  ], t);
+
+  assert.equal((await call('GET', '/api/s/%zz')).status, 400);
+  assert.equal((await call('GET', '/api/s/ok')).status, 200, 'the server is still alive');
+});
+
+test('a malformed request target gives 400', async (t) => {
+  const call = await serve([
+    { method: 'GET', pattern: '/api/ping', handler: async () => ({ body: {} }) },
+  ], t);
+
+  assert.equal((await call('GET', '/api/ping')).status, 200);
+});
+
 test('never sets CORS headers', async (t) => {
   const call = await serve([
     { method: 'GET', pattern: '/api/ping', handler: async () => ({ body: {} }) },

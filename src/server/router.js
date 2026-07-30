@@ -9,6 +9,8 @@ const BODY_LIMIT = 2 * 1024 * 1024;
  * @returns {void}
  */
 export const sendJson = (res, status, body) => {
+  if (res.writableEnded || res.destroyed) return;
+
   const payload = JSON.stringify(body ?? null);
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
@@ -45,6 +47,18 @@ export const readJson = async (req, limit = BODY_LIMIT) => {
 };
 
 /**
+ * @param {string} raw
+ * @returns {string}
+ */
+const decodeSegment = (raw) => {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    throw new StateError(400, 'malformed percent-escape in path');
+  }
+};
+
+/**
  * @param {string} pattern
  * @param {string} pathname
  * @returns {Record<string, string>|null}
@@ -58,7 +72,7 @@ const match = (pattern, pathname) => {
   const params = {};
   for (let i = 0; i < expected.length; i += 1) {
     if (expected[i].startsWith(':')) {
-      params[expected[i].slice(1)] = decodeURIComponent(actual[i]);
+      params[expected[i].slice(1)] = decodeSegment(actual[i]);
       continue;
     }
     if (expected[i] !== actual[i]) return null;
@@ -71,20 +85,35 @@ const match = (pattern, pathname) => {
  */
 
 /**
+ * @param {any} req
+ * @returns {URL}
+ */
+const parseTarget = (req) => {
+  try {
+    return new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+  } catch {
+    throw new StateError(400, 'malformed request target');
+  }
+};
+
+/**
  * @param {Route[]} routes
  * @returns {(req: any, res: any) => Promise<void>}
  */
 export const createRouter = (routes) => async (req, res) => {
-  const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+  // A write to an aborted socket emits 'error'; with no listener Node throws.
+  res.on('error', () => {});
 
-  let pathMatched = false;
-  for (const route of routes) {
-    const params = match(route.pattern, url.pathname);
-    if (!params) continue;
-    pathMatched = true;
-    if (route.method !== req.method) continue;
+  try {
+    const url = parseTarget(req);
+    let pathMatched = false;
 
-    try {
+    for (const route of routes) {
+      const params = match(route.pattern, url.pathname);
+      if (!params) continue;
+      pathMatched = true;
+      if (route.method !== req.method) continue;
+
       const body = ['POST', 'PATCH', 'PUT'].includes(req.method) ? await readJson(req) : null;
       const result = await route.handler({ req, res, params, query: url.searchParams, body, url });
       if (res.headersSent) return;
@@ -93,17 +122,18 @@ export const createRouter = (routes) => async (req, res) => {
         return;
       }
       sendJson(res, result.status ?? 200, result.body ?? null);
-    } catch (err) {
-      if (res.headersSent) {
-        res.end();
-        return;
-      }
-      const status = err instanceof StateError ? err.status : 500;
-      const message = err instanceof StateError ? err.message : 'internal error';
-      sendJson(res, status, { error: message });
+      return;
     }
-    return;
-  }
 
-  sendJson(res, pathMatched ? 405 : 404, { error: pathMatched ? 'method not allowed' : 'not found' });
+    sendJson(res, pathMatched ? 405 : 404, { error: pathMatched ? 'method not allowed' : 'not found' });
+  } catch (err) {
+    if (res.headersSent) {
+      res.end();
+      return;
+    }
+    // Two narrowed ternaries rather than one: err is unknown until narrowed.
+    const status = err instanceof StateError ? err.status : 500;
+    const message = err instanceof StateError ? err.message : 'internal error';
+    sendJson(res, status, { error: message });
+  }
 };
