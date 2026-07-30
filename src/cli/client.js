@@ -54,18 +54,7 @@ export const shutdown = async (port, pid) => {
 };
 
 /**
- * @param {number} port
- * @returns {Promise<void>}
- */
-const waitForHealth = async (port) => {
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    if ((await probe(port)).ok) return;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new CliError(3, `server did not come up on port ${port}`);
-};
-
-/**
+ * Starts a detached daemon and waits until that exact process answers health.
  * @param {number} port
  * @returns {Promise<void>}
  */
@@ -77,7 +66,20 @@ const spawnDaemon = async (port) => {
     env: { ...process.env, CR_PORT: String(port) },
   });
   child.unref();
-  await waitForHealth(port);
+
+  let exited = false;
+  child.once('exit', () => { exited = true; });
+
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const live = await probe(port);
+    // Identity matters: another daemon may already hold this port, and taking
+    // its health as ours reports success for a server we did not start.
+    if (live.ok && live.pid === child.pid) return;
+    if (exited) throw new CliError(3, `the server on port ${port} exited before it was ready`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  throw new CliError(3, `no server came up on port ${port}`);
 };
 
 /**
