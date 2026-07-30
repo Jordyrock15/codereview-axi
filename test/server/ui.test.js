@@ -31,6 +31,38 @@ test('GET /session/:key still serves the shell without a token, the fetch is wha
   assert.equal((await fetch(`${base}/session/${key}`)).status, 200);
 });
 
+test('GET /session/:key 404s an unknown key rather than rendering a page', async (t) => {
+  const { base } = await setup(t);
+  assert.equal((await fetch(`${base}/session/deadbeefdeadbeef`)).status, 404);
+});
+
+test('GET /session/:key carries CSP and X-Frame-Options headers', async (t) => {
+  const { base, key, token } = await setup(t);
+  const res = await fetch(`${base}/session/${key}?t=${token}`);
+
+  assert.match(
+    res.headers.get('content-security-policy') ?? '',
+    /default-src 'none'.*script-src 'self'.*style-src 'self'.*connect-src 'self'/,
+  );
+  assert.equal(res.headers.get('x-frame-options'), 'DENY');
+});
+
+test('GET /session/:key 404s a crafted, non-existent key rather than rendering a page', async (t) => {
+  const { base, key } = await setup(t);
+  const crafted = `${key}" onload="fetch('http://evil')`;
+  const res = await fetch(`${base}/session/${encodeURIComponent(crafted)}`);
+
+  assert.equal(res.status, 404);
+});
+
+test('shellHtml escapes a hostile key rather than breaking out of the attribute', async () => {
+  const { shellHtml } = await import('../../src/server/ui.js');
+  const html = shellHtml(`x" onload="fetch('http://evil')`);
+
+  assert.equal(html.includes('onload="'), false, 'the quote must be escaped so this never becomes a real attribute');
+  assert.match(html, /data-key="x&quot; onload=&quot;fetch\(&#39;http:\/\/evil&#39;\)"/);
+});
+
 test('assets are served with correct content types and no directory traversal', async (t) => {
   const { base } = await setup(t);
 

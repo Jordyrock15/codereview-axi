@@ -104,17 +104,19 @@ export const ensureServer = async () => {
 
   // findPort proves a port free by binding, then releases it, so a concurrent
   // starter can take it first. Retry rather than failing the command.
+  /** @type {unknown} */
+  let lastErr;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const port = await findPort(DEFAULT_PORT);
     try {
       await spawnDaemon(port);
       return port;
     } catch (err) {
-      if (attempt === 4) throw err;
+      lastErr = err;
     }
   }
 
-  throw new CliError(3, 'could not start a cr server');
+  throw lastErr;
 };
 
 /**
@@ -126,8 +128,9 @@ export const ensureServer = async () => {
  * @returns {Promise<{status: number, json: any}>}
  */
 export const request = async (port, method, path, body, token) => {
+  let res, text;
   try {
-    const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+    res = await fetch(`http://127.0.0.1:${port}${path}`, {
       method,
       headers: {
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
@@ -135,9 +138,16 @@ export const request = async (port, method, path, body, token) => {
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    const text = await res.text();
-    return { status: res.status, json: text === '' ? null : JSON.parse(text) };
+    text = await res.text();
   } catch {
     throw new CliError(3, 'cannot reach the cr server');
+  }
+
+  // The server answered, so it is not unreachable: exit 3 must be reserved
+  // for a transport failure, not a body this CLI happens not to understand.
+  try {
+    return { status: res.status, json: text === '' ? null : JSON.parse(text) };
+  } catch {
+    throw new CliError(1, 'the cr server sent an unreadable response');
   }
 };

@@ -90,7 +90,12 @@ export const patchComment = (session, id, patch, now) => {
     if (!['resolved', 'reopened'].includes(patch.status)) {
       throw new StateError(400, 'status may only be set to resolved or reopened');
     }
-    if (!['answered', 'resolved', 'reopened'].includes(comment.status)) {
+    // Stale may only move to reopened: resolving code that no longer exists is meaningless.
+    const allowedFrom = patch.status === 'reopened'
+      ? ['answered', 'resolved', 'reopened', 'stale']
+      : ['answered', 'resolved', 'reopened'];
+
+    if (!allowedFrom.includes(comment.status)) {
       if (comment.status === 'stale') {
         throw new StateError(409, `comment ${id} is stale, its code no longer exists`);
       }

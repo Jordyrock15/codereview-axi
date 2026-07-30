@@ -40,7 +40,8 @@ export const openOrReuse = (state, { repo, note, snapshot, port, now }) => {
   const existing = state.sessions[key];
 
   if (existing && existing.status === 'open') {
-    existing.note = note;
+    // A bare `cr open` sends no note; that must not wipe one set earlier.
+    if (note !== '') existing.note = note;
     existing.snapshot = snapshot;
     existing.snapshotAt = at;
     existing.updatedAt = at;

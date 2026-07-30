@@ -53,8 +53,20 @@ const el = (tag, className, text) => {
 /** @type {{file: string|null, side: 'old'|'new', start: number|null, end: number|null}} */
 const picking = { file: null, side: 'new', start: null, end: null };
 
+/**
+ * In-progress composer text survives a re-render only if it is kept outside
+ * the DOM the render wipes. Keyed by file and range so a different pick
+ * never inherits someone else's draft.
+ * @type {Map<string, {text: string, selStart: number, selEnd: number}>}
+ */
+const drafts = new Map();
+
+/** @returns {string} */
+const draftKey = () => `${picking.file}::${picking.side}::${picking.start}::${picking.end}`;
+
 /** @returns {void} */
 const clearPick = () => {
+  if (picking.file !== null) drafts.delete(draftKey());
   picking.file = null;
   picking.start = null;
   picking.end = null;
@@ -140,6 +152,13 @@ const openComposer = (file, afterRow) => {
   text.placeholder = 'What is wrong, and what should change';
   box.append(text);
 
+  const draft = drafts.get(draftKey());
+  if (draft) text.value = draft.text;
+
+  text.addEventListener('input', () => {
+    drafts.set(draftKey(), { text: text.value, selStart: text.selectionStart, selEnd: text.selectionEnd });
+  });
+
   let verdict = 'fix';
   const verdicts = el('div', 'verdicts');
   for (const option of ['fix', 'explain', 'ignore']) {
@@ -181,6 +200,21 @@ const openComposer = (file, afterRow) => {
 
   afterRow.after(box);
   text.focus();
+  if (draft) text.setSelectionRange(draft.selStart, draft.selEnd);
+};
+
+/**
+ * Shift-extending a range must not rebuild the composer, or the human's
+ * in-progress text is lost along with the textarea.
+ * @param {HTMLElement} box
+ * @param {SnapshotFile} file
+ * @returns {void}
+ */
+const updateComposerHeader = (box, file) => {
+  const from = Math.min(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
+  const to = Math.max(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
+  const who = box.querySelector('.who');
+  if (who) who.textContent = `New comment · ${file.path} · ${from === to ? `line ${from}` : `lines ${from}-${to}`}`;
 };
 
 /**
@@ -208,7 +242,16 @@ const threadFor = (comment) => {
 
   box.append(el('div', 'who', `${comment.status} · ${comment.verdict}`));
   box.append(el('div', 'body', comment.body));
-  if (comment.status === 'stale') box.append(el('div', 'was', `was: ${comment.quote}`));
+
+  if (comment.status === 'stale') {
+    box.append(el('div', 'was', `was: ${comment.quote}`));
+    const actions = el('span', 'actions');
+    const reopen = el('button', '', 'Reopen');
+    reopen.addEventListener('click', () => patch(comment.id, { status: 'reopened' }));
+    actions.append(reopen);
+    box.append(actions);
+  }
+
   return box;
 };
 
@@ -278,7 +321,9 @@ const renderRow = (file, line0) => {
 
     // The side must match too: the old and new gutters are adjacent columns, so
     // extending across them would build a quote for code the human never chose.
-    if (event.shiftKey && picking.start !== null && picking.file === file.path && side === picking.side) {
+    const shiftExtend = event.shiftKey && picking.start !== null && picking.file === file.path && side === picking.side;
+
+    if (shiftExtend) {
       picking.end = line;
     } else {
       picking.file = file.path;
@@ -287,7 +332,13 @@ const renderRow = (file, line0) => {
       picking.end = line;
     }
     paintPick();
-    openComposer(file, row);
+
+    const existingComposer = /** @type {HTMLElement|null} */ (document.querySelector('.thread.composer'));
+    if (shiftExtend && existingComposer) {
+      updateComposerHeader(existingComposer, file);
+    } else {
+      openComposer(file, row);
+    }
   };
 
   oldNo.addEventListener('click', pick('old'));
@@ -332,6 +383,28 @@ const renderDiff = () => {
   }
 
   renderThreadsImpl(pane, file);
+  reopenComposerIfPicking(pane, file);
+};
+
+/**
+ * `replaceChildren` above destroys any open composer along with its
+ * in-progress text. If the human was still picking a range in this file when
+ * the re-render happened (an SSE event, most likely), put it back.
+ * @param {HTMLElement} pane
+ * @param {SnapshotFile} file
+ * @returns {void}
+ */
+const reopenComposerIfPicking = (pane, file) => {
+  if (picking.file !== file.path || picking.end === null) return;
+
+  const rows = [.../** @type {NodeListOf<HTMLElement>} */ (pane.querySelectorAll('.row'))];
+  const anchor = rows.reverse().find((row) => (
+    Number(row.dataset[picking.side === 'new' ? 'newLine' : 'oldLine'] || 0) === picking.end
+  ));
+  if (!anchor) return;
+
+  paintPick();
+  openComposer(file, anchor);
 };
 
 /**
@@ -361,6 +434,9 @@ const send = async () => {
 
 /** @returns {Promise<void>} */
 const done = async () => {
+  // Closing is irreversible: a closed session's comments and replies are not kept.
+  if (!window.confirm("End this review? The session's comments and replies will not be kept.")) return;
+
   const res = await api('/close', { method: 'POST', body: JSON.stringify({ closedBy: 'human' }) });
   await load();
 

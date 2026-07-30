@@ -8,6 +8,19 @@ const TYPES = {
 };
 
 /**
+ * The key comes straight from the URL, so it must be escaped regardless of
+ * whether it happens to look like hex.
+ * @param {string} text
+ * @returns {string}
+ */
+const escapeHtml = (text) => text
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
+
+/**
  * @param {string} key
  * @returns {string}
  */
@@ -19,7 +32,7 @@ export const shellHtml = (key) => `<!doctype html>
 <title>cr review</title>
 <link rel="stylesheet" href="/assets/styles.css">
 </head>
-<body data-key="${key}" data-large="${LARGE_FILE_LINES}">
+<body data-key="${escapeHtml(key)}" data-large="${LARGE_FILE_LINES}">
 <header id="bar">
   <span id="note"></span>
   <span id="counts"></span>

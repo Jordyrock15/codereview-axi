@@ -218,6 +218,38 @@ test('POST /api/sessions reuses an open session and keeps its comments', async (
   assert.equal(second.comments.length, 1);
   assert.equal(second.note, 'second');
 });
+test('POST /api/sessions re-anchors an open comment on reuse, not just on refresh', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\ntwo\nthree\n' });
+  t.after(repo.cleanup);
+  await repo.write('a.js', 'one\nCHANGED\nthree\n');
+
+  const { call } = await startApp(t);
+  const first = (await call('POST', '/api/sessions', { repo: repo.dir, note: 'n' })).json;
+
+  await call('POST', `/api/sessions/${first.key}/comments?t=${first.token}`, {
+    scope: 'line', file: 'a.js', side: 'new', startLine: 2, endLine: 2, quote: 'CHANGED', body: 'move this', verdict: 'fix',
+  });
+
+  await repo.write('a.js', 'zero\none\nCHANGED\nthree\n');
+  const second = (await call('POST', '/api/sessions', { repo: repo.dir, note: 'n' })).json;
+
+  assert.equal(second.reused, true);
+  assert.equal(second.comments[0].startLine, 3, 'a second cr open must re-anchor, not just leave the old line number');
+});
+
+test('POST /api/sessions with no note leaves an existing note untouched on reuse', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.write('a.js', 'two\n');
+
+  const { call } = await startApp(t);
+  const first = (await call('POST', '/api/sessions', { repo: repo.dir, note: 'set by the agent' })).json;
+
+  const bare = (await call('POST', '/api/sessions', { repo: repo.dir })).json;
+  assert.equal(bare.reused, true);
+  assert.equal(bare.note, 'set by the agent', 'a bare cr open must not wipe the earlier note');
+});
+
 test('POST refresh recomputes the diff, re-anchors, and publishes to subscribers', async (t) => {
   const repo = await makeRepo({ 'a.js': 'one\ntwo\nthree\n' });
   t.after(repo.cleanup);

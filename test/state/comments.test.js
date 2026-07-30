@@ -104,6 +104,27 @@ test('patchComment names staleness rather than the agent when refusing a stale c
   });
 });
 
+test('patchComment reopens a stale comment, which is then sendable again', () => {
+  const s = session();
+  addComment(s, lineInput(), NOW);
+  s.comments[0].status = 'stale';
+
+  assert.equal(patchComment(s, 1, { status: 'reopened' }, NOW).status, 'reopened');
+  const sent = markSent(s, NOW);
+  assert.deepEqual(sent.map((c) => c.id), [1]);
+});
+
+test('patchComment still refuses to resolve a stale comment with 409', () => {
+  const s = session();
+  addComment(s, lineInput(), NOW);
+  s.comments[0].status = 'stale';
+
+  assert.throws(() => patchComment(s, 1, { status: 'resolved' }, NOW), (/** @type {any} */ err) => {
+    assert.equal(err.status, 409);
+    return true;
+  });
+});
+
 test('patchComment 404s on an unknown id', () => {
   assert.throws(() => patchComment(session(), 99, { body: 'x' }, NOW), (/** @type {any} */ err) => {
     assert.equal(err.status, 404);

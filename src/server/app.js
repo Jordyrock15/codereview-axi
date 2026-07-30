@@ -1,6 +1,6 @@
 import { toplevel } from '../diff/git.js';
 import { buildSnapshot } from '../diff/snapshot.js';
-import { mutateState } from '../state/store.js';
+import { mutateState, loadState } from '../state/store.js';
 import { openOrReuse, closeSession, reapSessions } from '../state/sessions.js';
 import { reanchor } from '../state/anchor.js';
 import { StateError } from '../state/errors.js';
@@ -112,7 +112,12 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
         const at = now();
         const { session, reused } = await mutateState((state) => {
           reapSessions(state, at);
-          return openOrReuse(state, { repo: root, note: String(body?.note ?? ''), snapshot, port, now: at });
+          const result = openOrReuse(state, { repo: root, note: String(body?.note ?? ''), snapshot, port, now: at });
+          // A reused session's threads are anchored against the old snapshot;
+          // without this a second `cr open` leaves them silently pointing at
+          // whatever now occupies their old line numbers.
+          if (result.reused) reanchor(result.session, snapshot);
+          return result;
         });
 
         return {
@@ -190,7 +195,7 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
       method: 'PATCH',
       pattern: '/api/sessions/:key/comments/:id',
       handler: async (ctx) => {
-        await guarded(ctx);
+        requireOpen(await guarded(ctx));
         const comment = await mutateState((state) => (
           patchComment(state.sessions[ctx.params.key], Number(ctx.params.id), ctx.body ?? {}, now())
         ));
@@ -237,7 +242,11 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
       handler: async (ctx) => {
         const session = await guarded(ctx);
         const holder = Number(ctx.query.get('holder') ?? 0);
-        const timeoutMs = Math.min(Number(ctx.query.get('timeout') ?? 300), 900) * 1000;
+        const requestedS = Number(ctx.query.get('timeout') ?? 300);
+        // Node's global fetch aborts at 300s (UND_ERR_HEADERS_TIMEOUT). Holding for
+        // the full requested duration then doing more work before responding runs
+        // past that, so the client sees a transport failure instead of an answer.
+        const timeoutMs = Math.max(1000, Math.min(requestedS, 900) * 1000 - 5000);
 
         await mutateState((state) => takeLease(state.sessions[ctx.params.key], holder, now()));
 
@@ -307,11 +316,18 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
       method: 'GET',
       pattern: '/session/:key',
       handler: async ({ res, params }) => {
+        // No token check here: the page fetches its own data with the token
+        // from the query string. But an unknown key must not render at all.
+        const state = await loadState();
+        if (!state.sessions[params.key]) throw new StateError(404, 'no such session');
+
         const html = shellHtml(params.key);
         res.writeHead(200, {
           'Content-Type': 'text/html; charset=utf-8',
           'Content-Length': Buffer.byteLength(html),
           'Cache-Control': 'no-store',
+          'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'",
+          'X-Frame-Options': 'DENY',
         });
         res.end(html);
       },
