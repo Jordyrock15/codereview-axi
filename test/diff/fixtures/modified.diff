@@ -1,0 +1,11 @@
+diff --git a/src/payouts/splitter.js b/src/payouts/splitter.js
+index 1a2b3c4..5d6e7f8 100644
+--- a/src/payouts/splitter.js
++++ b/src/payouts/splitter.js
+@@ -40,7 +40,8 @@ const helper = () => {
+ const shares = split(total, parts);
+-return shares.map(Math.round);
++return shares.map((s) => Math.round(s));
++addRemainder(shares);
+ }
+ 
