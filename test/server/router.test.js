@@ -133,12 +133,30 @@ test('a malformed percent-escape in a parameter gives 400 and does not crash', a
   assert.equal((await call('GET', '/api/s/ok')).status, 200, 'the server is still alive');
 });
 
-test('a malformed request target gives 400', async (t) => {
-  const call = await serve([
+test('a malformed request target gives 400 rather than throwing', async () => {
+  // Node's own parser rejects a malformed request line before the router sees
+  // it, so drive the handler directly: parseTarget is defence in depth.
+  const handler = createRouter([
     { method: 'GET', pattern: '/api/ping', handler: async () => ({ body: {} }) },
-  ], t);
+  ]);
 
-  assert.equal((await call('GET', '/api/ping')).status, 200);
+  /** @type {{status: number|null, body: string}} */
+  const captured = { status: null, body: '' };
+  const res = {
+    headersSent: false,
+    writableEnded: false,
+    destroyed: false,
+    on: () => res,
+    /** @param {number} status */
+    writeHead(status) { captured.status = status; this.headersSent = true; return this; },
+    /** @param {unknown} [payload] */
+    end(payload) { captured.body = String(payload ?? ''); return this; },
+  };
+
+  await handler({ method: 'GET', url: 'http://[invalid', headers: { host: '127.0.0.1:4390' }, on: () => {} }, res);
+
+  assert.equal(captured.status, 400);
+  assert.match(captured.body, /malformed request target/);
 });
 
 test('never sets CORS headers', async (t) => {
