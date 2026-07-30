@@ -10,12 +10,12 @@ npx -y codereview-axi open
 
 ## Verbs
 
-- `open` — start a review session for the current worktree's diff.
-- `wait` — block until the human replies or the session closes.
-- `list` — show open comments.
-- `reply` — answer a comment on behalf of the agent.
-- `refresh` — push a new snapshot of the diff into a running session.
-- `close` — end the session.
+- `open`: start a review session for the current worktree's diff.
+- `wait`: block until the human replies or the session closes.
+- `list`: show open comments.
+- `reply`: answer a comment on behalf of the agent.
+- `refresh`: push a new snapshot of the diff into a running session.
+- `close`: end the session.
 
 ## Not yet implemented
 
