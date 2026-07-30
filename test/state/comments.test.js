@@ -111,6 +111,17 @@ test('patchComment 404s on an unknown id', () => {
   });
 });
 
+test('editing a delivered comment makes it deliverable again', () => {
+  const s = session();
+  addComment(s, lineInput(), NOW);
+  markSent(s, NOW);
+  s.comments[0].deliveredAt = new Date(NOW).toISOString();
+
+  patchComment(s, 1, { body: 'clearer wording' }, NOW + 5);
+
+  assert.equal(s.comments[0].deliveredAt, null, 'an edit is new information and must reach the agent');
+});
+
 test('markSent moves open and reopened comments to sent and returns them', () => {
   const s = session();
   addComment(s, lineInput(), NOW);

@@ -71,6 +71,10 @@ export const patchComment = (session, id, patch, now) => {
   const comment = find(session, id);
   const at = new Date(now).toISOString();
 
+  // An edit is new information, so it must be deliverable again even if this
+  // comment was already handed to an agent in an earlier round.
+  if (patch.body !== undefined || patch.verdict !== undefined) comment.deliveredAt = null;
+
   if (patch.body !== undefined) {
     const body = String(patch.body).trim();
     if (body === '') throw new StateError(400, 'body cannot be empty');

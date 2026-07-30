@@ -69,6 +69,9 @@ const spawnDaemon = async (port) => {
 
   let exited = false;
   child.once('exit', () => { exited = true; });
+  // A spawn that never launches emits 'error', which is unhandled and fatal
+  // on a ChildProcess, and does not reliably emit 'exit'.
+  child.once('error', () => { exited = true; });
 
   for (let attempt = 0; attempt < 60; attempt += 1) {
     const live = await probe(port);

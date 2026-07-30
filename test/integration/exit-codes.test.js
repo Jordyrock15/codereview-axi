@@ -100,7 +100,7 @@ test('exit 1 for a verb with no open session', async (t) => {
   assert.match(result.out, /no open session/);
 });
 
-test('exit 3 when server.json points somewhere dead and the port cannot be bound', async (t) => {
+test('open self-heals when server.json points at a dead port', async (t) => {
   const repo = await makeRepo({ 'a.js': 'one\n' });
   /** @type {NodeJS.ProcessEnv} */
   let env;
@@ -113,13 +113,11 @@ test('exit 3 when server.json points somewhere dead and the port cannot be bound
   await mkdir(stateDir, { recursive: true });
   await writeFile(path.join(stateDir, 'server.json'), JSON.stringify({ pid: 999999, port: 1, version: '0.0.0' }));
 
-  // CR_FORCE_PORT is not read anywhere in the CLI, so this cannot actually
-  // pin the recovery attempt to the dead port. ensureServer's real behaviour,
-  // confirmed by direct inspection of src/cli/client.js, is unconditional
-  // self-healing: probe(1) fails fast, the stale server.json is removed, and
-  // findPort(DEFAULT_PORT) hands back a genuinely free port. Exit 3 is not a
-  // second possible outcome here, it is unreachable from this setup, so the
-  // assertion is narrowed to the one outcome this scenario can ever produce.
-  const result = await runIn(repo.dir, ['open'], { ...env, CR_FORCE_PORT: '1' });
+  // ensureServer's real behaviour, confirmed by direct inspection of
+  // src/cli/client.js, is unconditional self-healing: probe(1) fails fast,
+  // the stale server.json is removed, and findPort(DEFAULT_PORT) hands back
+  // a genuinely free port. This test exercises exactly that path, and only
+  // that path; it is not a test of exit 3.
+  const result = await runIn(repo.dir, ['open'], env);
   assert.equal(result.code, 0, `expected self-healing recovery, got ${result.code}: ${result.out}`);
 });
