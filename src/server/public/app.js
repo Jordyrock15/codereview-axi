@@ -55,14 +55,18 @@ const picking = { file: null, side: 'new', start: null, end: null };
 
 /**
  * In-progress composer text survives a re-render only if it is kept outside
- * the DOM the render wipes. Keyed by file and range so a different pick
- * never inherits someone else's draft.
+ * the DOM the render wipes. Keyed by file, side and the range's start line,
+ * not the end: a shift-extend changes `picking.end` without rebuilding the
+ * composer, so keying on the end too would silently fork a single in-progress
+ * draft into two map entries, the older of which `clearPick` would never
+ * reach. A different pick (different file, side or start line) still gets
+ * its own entry and never inherits someone else's draft.
  * @type {Map<string, {text: string, selStart: number, selEnd: number}>}
  */
 const drafts = new Map();
 
 /** @returns {string} */
-const draftKey = () => `${picking.file}::${picking.side}::${picking.start}::${picking.end}`;
+const draftKey = () => `${picking.file}::${picking.side}::${picking.start}`;
 
 /** @returns {void} */
 const clearPick = () => {
