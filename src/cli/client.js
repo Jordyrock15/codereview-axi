@@ -8,13 +8,17 @@ const pkg = JSON.parse(await readFile(new URL('../../package.json', import.meta.
 /** Carries a CLI exit code. */
 export class CliError extends Error {
   /**
+   * `code` is the process exit code, 1 for any error and 2 for an unknown flag.
+   * `slug` is the stable machine-readable case, carrying what exit 2 and 3 used to.
    * @param {number} code
    * @param {string} message
+   * @param {string} [slug]
    */
-  constructor(code, message) {
+  constructor(code, message, slug = 'error') {
     super(message);
     this.name = 'CliError';
     this.code = code;
+    this.slug = slug;
   }
 }
 
@@ -78,11 +82,11 @@ const spawnDaemon = async (port) => {
     // Identity matters: another daemon may already hold this port, and taking
     // its health as ours reports success for a server we did not start.
     if (live.ok && live.pid === child.pid) return;
-    if (exited) throw new CliError(3, `the server on port ${port} exited before it was ready`);
+    if (exited) throw new CliError(1, `the server on port ${port} exited before it was ready`, 'server-unreachable');
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
-  throw new CliError(3, `no server came up on port ${port}`);
+  throw new CliError(1, `no server came up on port ${port}`, 'server-unreachable');
 };
 
 /**
@@ -140,10 +144,10 @@ export const request = async (port, method, path, body, token) => {
     });
     text = await res.text();
   } catch {
-    throw new CliError(3, 'cannot reach the cr server');
+    throw new CliError(1, 'cannot reach the cr server', 'server-unreachable');
   }
 
-  // The server answered, so it is not unreachable: exit 3 must be reserved
+  // The server answered, so it is not unreachable: the slug above is reserved
   // for a transport failure, not a body this CLI happens not to understand.
   try {
     return { status: res.status, json: text === '' ? null : JSON.parse(text) };

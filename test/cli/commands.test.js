@@ -35,7 +35,7 @@ const setup = async (t) => {
 
 test('open prints session metadata as JSON and exits 0', async (t) => {
   const { cr } = await setup(t);
-  const result = await cr(['open', '--note', 'changed a']);
+  const result = await cr(['open', '--note', 'changed a', '--json']);
 
   assert.equal(result.code, 0);
   const json = JSON.parse(result.out);
@@ -54,10 +54,11 @@ test('open --base main prints a diff containing the branch commit, unlike a bare
   await repo.run(['add', '-A']);
   await repo.run(['commit', '-m', 'branch change']);
 
-  const bare = await cr(['open']);
-  assert.equal(bare.code, 2, 'a bare open sees a clean tree relative to HEAD');
+  const bare = await cr(['open', '--json']);
+  assert.equal(bare.code, 1, 'a bare open sees a clean tree relative to HEAD');
+  assert.equal(JSON.parse(bare.out).error.code, 'nothing-to-review');
 
-  const withBase = await cr(['open', '--base', 'main']);
+  const withBase = await cr(['open', '--base', 'main', '--json']);
   assert.equal(withBase.code, 0);
   const json = JSON.parse(withBase.out);
   assert.equal(json.base, 'main');
@@ -144,7 +145,9 @@ test('open --pr rejects a non-integer PR number without invoking gh', async (t) 
     argv: ['open', '--pr', 'abc', '--no-browser'], cwd: repo.dir, resolvePr,
   });
   assert.equal(result.code, 1);
-  assert.match(result.out, /--pr needs a positive whole number, got "abc"/);
+  // The message is quoted inside a structured error payload now, so its own
+  // quotes come back backslash-escaped rather than literal.
+  assert.match(result.out, /--pr needs a positive whole number, got \\"abc\\"/);
 });
 
 test('open --pr with no value is a usage error without invoking gh', async (t) => {
@@ -228,17 +231,17 @@ test('open --pr succeeds on the PR head branch and records the pr on the session
   const result = await run({ argv: ['open', '--pr', '11', '--no-browser'], cwd: repo.dir, resolvePr });
 
   assert.equal(result.code, 0);
-  const json = JSON.parse(result.out);
-  assert.equal(json.base, 'main');
-  assert.equal(json.pr, 11);
+  assert.match(result.out, /^base: main$/m);
+  assert.match(result.out, /^pr: 11$/m);
 });
 
-test('open exits 2 on a clean tree', async (t) => {
+test('open exits 1 with the nothing-to-review slug on a clean tree', async (t) => {
   const { cr, repo } = await setup(t);
   await repo.run(['checkout', '--', 'a.js']);
-  const result = await cr(['open']);
-  assert.equal(result.code, 2);
+  const result = await cr(['open', '--json']);
+  assert.equal(result.code, 1);
   assert.match(result.out, /nothing to review/);
+  assert.equal(JSON.parse(result.out).error.code, 'nothing-to-review');
 });
 
 test('open exits 1 outside a git worktree', async (t) => {
@@ -251,7 +254,7 @@ test('open exits 1 outside a git worktree', async (t) => {
 test('list prints comments for the cwd session', async (t) => {
   const { cr } = await setup(t);
   await cr(['open']);
-  const result = await cr(['list']);
+  const result = await cr(['list', '--json']);
   assert.equal(result.code, 0);
   assert.deepEqual(JSON.parse(result.out).comments, []);
 });
@@ -266,7 +269,7 @@ test('a verb other than open exits 1 when no session exists for the cwd', async 
 test('wait returns an empty comment array on timeout', async (t) => {
   const { cr } = await setup(t);
   await cr(['open']);
-  const result = await cr(['wait', '--timeout', '1']);
+  const result = await cr(['wait', '--timeout', '1', '--json']);
 
   assert.equal(result.code, 0);
   const json = JSON.parse(result.out);
@@ -283,7 +286,7 @@ test('wait --say posts a chat line before waiting', async (t) => {
 
 test('wait --say updates the note and creates no comment', async (t) => {
   const { cr } = await setup(t);
-  const opened = JSON.parse((await cr(['open'])).out);
+  const opened = JSON.parse((await cr(['open', '--json'])).out);
   await cr(['wait', '--timeout', '1', '--say', 'check the rounding first']);
 
   const { loadState } = await import('../../src/state/store.js');
@@ -295,7 +298,7 @@ test('wait --say updates the note and creates no comment', async (t) => {
 
 test('reply and refresh drive a full round', async (t) => {
   const { cr, repo } = await setup(t);
-  const opened = JSON.parse((await cr(['open'])).out);
+  const opened = JSON.parse((await cr(['open', '--json'])).out);
 
   const { loadState } = await import('../../src/state/store.js');
   const { request } = await import('../../src/cli/client.js');
@@ -309,16 +312,16 @@ test('reply and refresh drive a full round', async (t) => {
   }, token);
   await request(port, 'POST', `/api/sessions/${opened.key}/send`, {}, token);
 
-  const waited = JSON.parse((await cr(['wait', '--timeout', '5'])).out);
+  const waited = JSON.parse((await cr(['wait', '--timeout', '5', '--json'])).out);
   assert.equal(waited.comments.length, 1);
   assert.equal(waited.comments[0].body, 'rounding is wrong');
-  assert.equal(waited.comments[0].context.before.at(-1), 'one');
+  assert.equal(waited.comments[0].context, undefined, 'context is CLI-only noise, dropped before printing');
 
   const replied = await cr(['reply', '--id', '1', '--status', 'fixed', '--body', 'distributed the remainder']);
   assert.equal(replied.code, 0);
 
   await repo.write('a.js', 'one\nFIXED\nthree\n');
-  const refreshed = JSON.parse((await cr(['refresh'])).out);
+  const refreshed = JSON.parse((await cr(['refresh', '--json'])).out);
   assert.deepEqual(refreshed.stale, []);
 });
 
@@ -341,7 +344,7 @@ test('close ends the session and a second close exits 1', async (t) => {
   const { cr } = await setup(t);
   await cr(['open']);
 
-  const closed = await cr(['close']);
+  const closed = await cr(['close', '--json']);
   assert.equal(closed.code, 0);
   assert.equal(JSON.parse(closed.out).closedBy, 'agent');
 
@@ -350,7 +353,7 @@ test('close ends the session and a second close exits 1', async (t) => {
 
 test('wait reports a session the human closed', async (t) => {
   const { cr } = await setup(t);
-  const opened = JSON.parse((await cr(['open'])).out);
+  const opened = JSON.parse((await cr(['open', '--json'])).out);
 
   const { loadState } = await import('../../src/state/store.js');
   const { request } = await import('../../src/cli/client.js');
@@ -359,7 +362,7 @@ test('wait reports a session the human closed', async (t) => {
   const { token } = (await loadState()).sessions[opened.key];
   await request(port, 'POST', `/api/sessions/${opened.key}/close`, { closedBy: 'human' }, token);
 
-  const json = JSON.parse((await cr(['wait', '--timeout', '1'])).out);
+  const json = JSON.parse((await cr(['wait', '--timeout', '1', '--json'])).out);
   assert.equal(json.closed, true);
   assert.equal(json.closedBy, 'human');
 });
@@ -408,4 +411,100 @@ test('--help on a verb describes only that verb', async () => {
   assert.equal(result.code, 0);
   assert.match(result.out, /usage: cr reply/);
   assert.equal(/--no-browser/.test(result.out), false);
+});
+
+test('open prints TOON by default and JSON under --json', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.write('a.js', 'two\n');
+
+  const toon = await run({ argv: ['open', '--no-browser'], cwd: repo.dir });
+  assert.equal(toon.code, 0);
+  assert.match(toon.out, /^key: /m, 'a TOON field line');
+  assert.equal(toon.out.trimStart().startsWith('{'), false, 'not JSON');
+
+  const json = await run({ argv: ['open', '--json', '--no-browser'], cwd: repo.dir });
+  assert.equal(json.code, 0);
+  assert.doesNotThrow(() => JSON.parse(json.out));
+});
+
+test('an error is a structured TOON error object carrying the prose', async () => {
+  const result = await run({ argv: ['open', '--base=', '--no-browser'], cwd: process.cwd() });
+  assert.equal(result.code, 1);
+  assert.match(result.out, /^error:/m);
+  assert.match(result.out, /code: /);
+  assert.match(result.out, /--base needs a value/);
+});
+
+test('a clean tree is exit 1 with the nothing-to-review slug, not a bare exit code', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+
+  const result = await run({ argv: ['open', '--json', '--no-browser'], cwd: repo.dir });
+  assert.equal(result.code, 1, 'axi reserves 2 for an unknown flag');
+  assert.equal(JSON.parse(result.out).error.code, 'nothing-to-review');
+});
+
+test('an unknown flag and a clean tree are told apart by exit code, not by prose', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+
+  const clean = await run({ argv: ['open', '--no-browser'], cwd: repo.dir });
+  const bogus = await run({ argv: ['open', '--nope', '--no-browser'], cwd: repo.dir });
+  assert.equal(clean.code, 1);
+  assert.equal(bogus.code, 2);
+});
+
+test('an error under --json is parseable and keeps the same code and message', async () => {
+  const result = await run({ argv: ['open', '--base=', '--json', '--no-browser'], cwd: process.cwd() });
+  assert.equal(result.code, 1);
+  const parsed = JSON.parse(result.out);
+  assert.equal(typeof parsed.error.code, 'string');
+  assert.match(parsed.error.message, /--base needs a value/);
+});
+
+test('usage output stays plain text under both formats', async () => {
+  for (const argv of [['reply', '--help'], ['reply', '--help', '--json']]) {
+    const result = await run({ argv, cwd: process.cwd() });
+    assert.match(result.out, /usage: cr reply/);
+  }
+});
+
+test("every verb's real success payload encodes as TOON without throwing", async (t) => {
+  const { cr, repo } = await setup(t);
+  const { encode } = await import('../../src/cli/toon.js');
+  const { loadState } = await import('../../src/state/store.js');
+  const { request } = await import('../../src/cli/client.js');
+  const { readServerFile } = await import('../../src/server/index.js');
+
+  // `--json` gives a parseable handle on the same value `encode()` sees on
+  // the default path: both formats run through the same presentation-layer
+  // reshape (see `forDisplay` in commands.js) before either is applied. This
+  // is a shape check, not a golden-output test, so it survives fields moving.
+  const opened = JSON.parse((await cr(['open', '--json'])).out);
+  assert.doesNotThrow(() => encode(opened), 'open');
+
+  const { port } = /** @type {{pid: number, port: number, version: string}} */ (await readServerFile());
+  const { token } = (await loadState()).sessions[opened.key];
+  await request(port, 'POST', `/api/sessions/${opened.key}/comments`, {
+    scope: 'line', file: 'a.js', side: 'new', startLine: 2, endLine: 2,
+    quote: 'TWO', body: 'rounding is wrong', verdict: 'fix',
+  }, token);
+  await request(port, 'POST', `/api/sessions/${opened.key}/send`, {}, token);
+
+  const waited = JSON.parse((await cr(['wait', '--timeout', '5', '--json'])).out);
+  assert.doesNotThrow(() => encode(waited), 'wait');
+
+  const listed = JSON.parse((await cr(['list', '--json'])).out);
+  assert.doesNotThrow(() => encode(listed), 'list');
+
+  const replied = JSON.parse((await cr(['reply', '--id', '1', '--status', 'fixed', '--body', 'x', '--json'])).out);
+  assert.doesNotThrow(() => encode(replied), 'reply');
+
+  await repo.write('a.js', 'one\nFIXED\nthree\n');
+  const refreshed = JSON.parse((await cr(['refresh', '--json'])).out);
+  assert.doesNotThrow(() => encode(refreshed), 'refresh');
+
+  const closed = JSON.parse((await cr(['close', '--json'])).out);
+  assert.doesNotThrow(() => encode(closed), 'close');
 });

@@ -101,7 +101,7 @@ const portFor = async (env) => {
 test('a full session runs open, comment, send, wait, reply, refresh, reopen, close', async (t) => {
   const { cr, repo, env } = await setup(t);
 
-  const opened = JSON.parse((await cr(['open', '--note', 'refactored a'])).out);
+  const opened = JSON.parse((await cr(['open', '--note', 'refactored a', '--json'])).out);
   assert.equal(opened.reused, false);
 
   const port = await portFor(env);
@@ -115,21 +115,21 @@ test('a full session runs open, comment, send, wait, reply, refresh, reopen, clo
   assert.equal(created.status, 201);
   assert.equal((await post(port, opened.key, token, '/send')).json.sent, 1);
 
-  // The agent collects, with context.
-  const waited = JSON.parse((await cr(['wait', '--timeout', '5'])).out);
+  // The agent collects. Context is computed by the route (see
+  // test/server/pending.test.js) but dropped from the CLI's own output.
+  const waited = JSON.parse((await cr(['wait', '--timeout', '5', '--json'])).out);
   assert.equal(waited.comments.length, 1);
   assert.equal(waited.comments[0].status, 'sent');
-  assert.equal(waited.comments[0].context.before.length, 1);
-  assert.equal(waited.comments[0].context.after.length, 3);
+  assert.equal(waited.comments[0].context, undefined, 'context is CLI-only noise, dropped before printing');
 
   // The agent fixes and replies.
   await repo.write('a.js', 'one\nFIXED\nthree\nfour\nfive\n');
   assert.equal((await cr(['reply', '--id', '1', '--status', 'fixed', '--body', 'distributed'])).code, 0);
 
-  const refreshed = JSON.parse((await cr(['refresh'])).out);
+  const refreshed = JSON.parse((await cr(['refresh', '--json'])).out);
   assert.deepEqual(refreshed.stale, [], 'an answered thread never goes stale, even though its quote is gone');
 
-  const listed = JSON.parse((await cr(['list'])).out);
+  const listed = JSON.parse((await cr(['list', '--json'])).out);
   assert.equal(listed.comments[0].status, 'answered');
 
   // The human reopens, the agent sees it again.
@@ -139,11 +139,11 @@ test('a full session runs open, comment, send, wait, reply, refresh, reopen, clo
     body: JSON.stringify({ status: 'reopened' }),
   });
   assert.equal((await post(port, opened.key, token, '/send')).json.sent, 1);
-  assert.equal(JSON.parse((await cr(['wait', '--timeout', '5'])).out).comments.length, 1);
+  assert.equal(JSON.parse((await cr(['wait', '--timeout', '5', '--json'])).out).comments.length, 1);
 
   // The human ends it.
   await post(port, opened.key, token, '/close', { closedBy: 'human' });
-  const final = JSON.parse((await cr(['wait', '--timeout', '2'])).out);
+  const final = JSON.parse((await cr(['wait', '--timeout', '2', '--json'])).out);
   assert.equal(final.closed, true);
   assert.equal(final.closedBy, 'human');
 });
@@ -159,7 +159,7 @@ test('the repository is byte-identical after a full session', async (t) => {
     reflog: await repo.run(['reflog', '--format=%H %gs']),
   };
 
-  const opened = JSON.parse((await cr(['open', '--note', 'n'])).out);
+  const opened = JSON.parse((await cr(['open', '--note', 'n', '--json'])).out);
   const port = await portFor(env);
   const token = await tokenFor(env, opened.key);
 
@@ -199,7 +199,7 @@ test('the repository is byte-identical after a --base session, a refresh, and th
     reflog: await repo.run(['reflog', '--format=%H %gs']),
   };
 
-  const opened = JSON.parse((await cr(['open', '--base', 'main'])).out);
+  const opened = JSON.parse((await cr(['open', '--base', 'main', '--json'])).out);
   assert.equal(opened.base, 'main');
 
   const port = await portFor(env);
@@ -235,7 +235,7 @@ test('the repository is byte-identical after a --base session, a refresh, and th
 
 test('a second agent waiting on the same session is refused', async (t) => {
   const { cr, env } = await setup(t);
-  const opened = JSON.parse((await cr(['open'])).out);
+  const opened = JSON.parse((await cr(['open', '--json'])).out);
   const port = await portFor(env);
   const token = await tokenFor(env, opened.key);
 
@@ -254,7 +254,7 @@ test('a second agent waiting on the same session is refused', async (t) => {
 
 test('a closed session is not resumed, and its comments do not come back', async (t) => {
   const { cr, env } = await setup(t);
-  const first = JSON.parse((await cr(['open', '--note', 'first'])).out);
+  const first = JSON.parse((await cr(['open', '--note', 'first', '--json'])).out);
   const port = await portFor(env);
   const token = await tokenFor(env, first.key);
 
@@ -263,7 +263,7 @@ test('a closed session is not resumed, and its comments do not come back', async
   });
   await cr(['close']);
 
-  const second = JSON.parse((await cr(['open', '--note', 'second'])).out);
+  const second = JSON.parse((await cr(['open', '--note', 'second', '--json'])).out);
   assert.equal(second.reused, false);
   assert.deepEqual(second.comments, []);
   assert.notEqual(await tokenFor(env, second.key), token);

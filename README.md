@@ -1,6 +1,6 @@
 # codereview-axi
 
-Reviewing an agent-written diff in a terminal loses the anchor between a comment and the code it is about: line numbers scroll past, context is gone by the time a reply arrives. `cr` opens a browser review session over a git diff instead: the working diff by default, or a branch against its base, or a pull request. A human reads the actual diff, highlights lines, and leaves a comment with intent (fix, explain, ignore); those comments feed straight back to the coding agent as JSON, and the agent replies and refreshes the diff in place.
+Reviewing an agent-written diff in a terminal loses the anchor between a comment and the code it is about: line numbers scroll past, context is gone by the time a reply arrives. `cr` opens a browser review session over a git diff instead: the working diff by default, or a branch against its base, or a pull request. A human reads the actual diff, highlights lines, and leaves a comment with intent (fix, explain, ignore); those comments feed straight back to the coding agent as TOON (or JSON under `--json`), and the agent replies and refreshes the diff in place.
 
 ## Install
 
@@ -42,6 +42,8 @@ usage: cr <verb> [flags]
   close     end the session
 
 run `cr <verb> --help` for a verb's flags
+
+every verb accepts --json to print JSON instead of TOON
 ```
 
 By default `open` reviews the working diff (`git diff HEAD`). `--base <ref>` reviews the current branch against `git diff $(git merge-base <ref> HEAD)` instead, so independent work on the base branch since it diverged stays out of the diff. `--pr <number>` resolves a pull request's base and head branch through `gh` and reviews it the same way as `--base <baseRefName>` would, but only if the current branch is already the PR's head: if it is not, `cr` refuses and prints the `git fetch`/`git checkout` command to run rather than checking out the branch itself. `--pr` and `--base` cannot be combined. `refresh` recomputes against whichever surface the session was opened with, and reopening a session with a different base or PR is refused rather than silently swapped.
@@ -53,14 +55,15 @@ By default `open` reviews the working diff (`git diff HEAD`). `--base <ref>` rev
 | Code | Meaning |
 |---|---|
 | 0 | Ok |
-| 1 | Usage or state error, for example not a git worktree, no open session, or a rejected request |
-| 2 | Nothing to review, the working diff is empty |
-| 3 | Server unreachable, for example it died mid-`wait` |
+| 1 | Error; the structured error's `code` slug says which kind |
+| 2 | Unknown flag |
+
+Slugs seen under exit 1 include `usage` (the human typed something wrong, for example not a git worktree or a bad `--base`), `state` (the world is not in the right state, for example no open session), `nothing-to-review` (the working diff is empty) and `server-unreachable` (the server died mid-`wait` or never came up).
 
 ## How the agent should drive it
 
 1. `cr open --note "refactored the payout splitter"`. Prints the session URL, opens a tab.
-2. `cr wait --timeout 300 --say "biggest change is the rounding, check that first"`. Blocks until the human annotates and presses Send. Comments return as JSON.
+2. `cr wait --timeout 300 --say "biggest change is the rounding, check that first"`. Blocks until the human annotates and presses Send. Comments return as TOON, or JSON under `--json`.
 3. Handle each comment by verdict: `fix` edits the code, `explain` writes a justification and changes nothing, `ignore` is acknowledged and dropped.
 4. `cr reply` per comment, then `cr refresh` to push a new snapshot; the tab updates over SSE and threads show the replies.
 5. Back to step 2. When the response carries `closed: true` with `closedBy: "human"`, the review is over: stop, and do not reopen the session uninvited.

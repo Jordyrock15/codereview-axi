@@ -112,13 +112,14 @@ test('request sends the token header and parses JSON', async (t) => {
   assert.equal(res.json.ok, true);
 });
 
-test('request throws a CliError with code 3 when the server is gone', async (t) => {
+test('request throws a CliError with the server-unreachable slug when the server is gone', async (t) => {
   await withHome(t);
   const { request, CliError } = await import('../../src/cli/client.js');
 
   await assert.rejects(() => request(45461, 'GET', '/api/health'), (err) => {
     assert.ok(err instanceof CliError);
-    assert.equal(err.code, 3);
+    assert.equal(err.code, 1);
+    assert.equal(err.slug, 'server-unreachable');
     return true;
   });
 });

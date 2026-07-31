@@ -24,7 +24,7 @@ test('POST /api/sessions creates a session and returns file metadata but no hunk
   assert.match(res.json.url, /^http:\/\/127\.0\.0\.1:\d+\/session\/[0-9a-f]{16}\?t=[0-9a-f]{64}$/);
 });
 
-test('POST /api/sessions 422s a clean tree so the CLI can exit 2', async (t) => {
+test('POST /api/sessions 422s a clean tree so the CLI can map it to a nothing-to-review error', async (t) => {
   const repo = await makeRepo({ 'a.js': 'one\n' });
   t.after(repo.cleanup);
 

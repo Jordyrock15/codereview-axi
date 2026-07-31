@@ -7,6 +7,7 @@ import { loadState } from '../state/store.js';
 import { sessionKey } from '../state/sessions.js';
 import { shQuote } from '../shell.js';
 import { USAGE, verbHelp, unknownFlags } from './spec.js';
+import { encode } from './toon.js';
 
 export { USAGE } from './spec.js';
 
@@ -16,12 +17,12 @@ export { USAGE } from './spec.js';
  */
 const resolveSession = async (cwd) => {
   const root = await toplevel(cwd);
-  if (root === null) throw new CliError(1, `${cwd} is not inside a git worktree`);
+  if (root === null) throw new CliError(1, `${cwd} is not inside a git worktree`, 'state');
 
   const key = sessionKey(root);
   const session = (await loadState()).sessions[key];
   if (!session) {
-    throw new CliError(1, `no open session for ${root}, run cr open first`);
+    throw new CliError(1, `no open session for ${root}, run cr open first`, 'state');
   }
   return { key, token: session.token, repo: root };
 };
@@ -32,8 +33,8 @@ const resolveSession = async (cwd) => {
  */
 const unwrap = (res) => {
   if (res.status >= 200 && res.status < 300) return res.json;
-  if (res.status === 422) throw new CliError(2, res.json?.error ?? 'nothing to review');
-  throw new CliError(1, res.json?.error ?? `request failed with ${res.status}`);
+  if (res.status === 422) throw new CliError(1, res.json?.error ?? 'nothing to review', 'nothing-to-review');
+  throw new CliError(1, res.json?.error ?? `request failed with ${res.status}`, 'state');
 };
 
 /**
@@ -44,13 +45,13 @@ const unwrap = (res) => {
 const HANDLERS = {
   open: async ({ flags, cwd, port, resolvePr }) => {
     const root = await toplevel(cwd);
-    if (root === null) throw new CliError(1, `${cwd} is not inside a git worktree`);
+    if (root === null) throw new CliError(1, `${cwd} is not inside a git worktree`, 'state');
 
     if (flags.pr !== undefined && flags.base !== undefined) {
-      throw new CliError(1, '--pr and --base cannot be combined, the pull request determines the base');
+      throw new CliError(1, '--pr and --base cannot be combined, the pull request determines the base', 'usage');
     }
     if (flags.base !== undefined && (typeof flags.base !== 'string' || flags.base === '')) {
-      throw new CliError(1, '--base needs a value, for example --base main');
+      throw new CliError(1, '--base needs a value, for example --base main', 'usage');
     }
 
     /** @type {{repo: string, note: string, base?: string, pr?: number}} */
@@ -61,14 +62,14 @@ const HANDLERS = {
       try {
         n = parsePrNumber(flags.pr);
       } catch (err) {
-        throw new CliError(1, err instanceof Error ? err.message : String(err));
+        throw new CliError(1, err instanceof Error ? err.message : String(err), 'usage');
       }
 
       let resolved;
       try {
         resolved = await resolvePr(n, { cwd: root });
       } catch (err) {
-        throw new CliError(1, err instanceof Error ? err.message : String(err));
+        throw new CliError(1, err instanceof Error ? err.message : String(err), 'state');
       }
 
       let branch;
@@ -80,11 +81,11 @@ const HANDLERS = {
         const detail = typeof err?.stderr === 'string' && err.stderr.trim() !== ''
           ? err.stderr.trim().split('\n')[0]
           : (err instanceof Error ? err.message : String(err));
-        throw new CliError(1, `could not determine the current branch: ${detail}`);
+        throw new CliError(1, `could not determine the current branch: ${detail}`, 'state');
       }
       if (branch !== resolved.head) {
         const head = shQuote(resolved.head);
-        throw new CliError(1, `PR ${n} reviews ${resolved.head}, but the current branch is ${branch}. Run: git fetch origin ${head} && git checkout ${head}`);
+        throw new CliError(1, `PR ${n} reviews ${resolved.head}, but the current branch is ${branch}. Run: git fetch origin ${head} && git checkout ${head}`, 'state');
       }
 
       body.base = resolved.base;
@@ -133,9 +134,9 @@ const HANDLERS = {
   reply: async ({ flags, cwd, port }) => {
     const { key, token } = await resolveSession(cwd);
     const id = Number(flags.id);
-    if (!Number.isInteger(id)) throw new CliError(1, 'reply needs --id N');
-    if (typeof flags.status !== 'string') throw new CliError(1, 'reply needs --status fixed|explained|skipped');
-    if (typeof flags.body !== 'string') throw new CliError(1, 'reply needs --body TEXT');
+    if (!Number.isInteger(id)) throw new CliError(1, 'reply needs --id N', 'usage');
+    if (typeof flags.status !== 'string') throw new CliError(1, 'reply needs --status fixed|explained|skipped', 'usage');
+    if (typeof flags.body !== 'string') throw new CliError(1, 'reply needs --body TEXT', 'usage');
 
     const body = { id, status: flags.status, body: flags.body };
     return unwrap(await request(port, 'POST', `/api/sessions/${key}/replies`, body, token));
@@ -148,8 +149,57 @@ const HANDLERS = {
 
   close: async ({ cwd, port }) => {
     const { key, token } = await resolveSession(cwd);
-    return unwrap(await request(port, 'POST', `/api/sessions/${key}/close`, { closedBy: 'agent' }, token));
+    const session = unwrap(await request(port, 'POST', `/api/sessions/${key}/close`, { closedBy: 'agent' }, token));
+    return {
+      key: session.key,
+      status: session.status,
+      closedBy: session.closedBy,
+      counts: commentCounts(session.comments),
+    };
   },
+};
+
+/**
+ * `total` plus one entry per status actually present, not every status
+ * `Comment.status` could hold: axi principle 2, no zero-value noise.
+ * @param {{status: string}[]} comments
+ * @returns {Record<string, number>}
+ */
+const commentCounts = (comments) => {
+  /** @type {Record<string, number>} */
+  const counts = { total: comments.length };
+  for (const { status } of comments) counts[status] = (counts[status] ?? 0) + 1;
+  return counts;
+};
+
+/**
+ * Flattens the shapes `toon.js` cannot carry into presentation-safe
+ * primitives, for the CLI's own output only: the browser still gets the
+ * server's untouched payload. `tags` joins to a space-separated string,
+ * `context` is dropped (the agent reads the file itself; it is large and the
+ * agent does not need it), and `agentReply` flattens to `''` or `status:
+ * body`. TODO(Task 4): move this into present.js rather than duplicating it.
+ * @param {unknown} value
+ * @returns {unknown}
+ */
+const forDisplay = (value) => {
+  if (Array.isArray(value)) return value.map(forDisplay);
+  if (value === null || typeof value !== 'object') return value;
+
+  /** @type {Record<string, unknown>} */
+  const out = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (k === 'context') continue;
+    if (k === 'tags' && Array.isArray(v)) {
+      out[k] = v.join(' ');
+    } else if (k === 'agentReply') {
+      const reply = /** @type {{status: string, body: string}|null} */ (v);
+      out[k] = reply === null ? '' : `${reply.status}: ${reply.body}`;
+    } else {
+      out[k] = forDisplay(v);
+    }
+  }
+  return out;
 };
 
 /**
@@ -174,15 +224,21 @@ export const run = async ({ argv, cwd, resolvePr = defaultResolvePr }) => {
     return { code: 2, out: `unknown ${unknown.length === 1 ? 'flag' : 'flags'} ${named}\n\n${verbHelp(verb)}` };
   }
 
+  const asText = (/** @type {unknown} */ value) => (
+    flags.json === true ? JSON.stringify(value, null, 2) : encode(/** @type {any} */ (value))
+  );
+
   try {
     const port = await ensureServer();
     const result = await handler({
       flags, cwd, port, resolvePr,
     });
-    return { code: 0, out: JSON.stringify(result, null, 2) };
+    return { code: 0, out: asText(forDisplay(result)) };
   } catch (err) {
-    if (err instanceof CliError) return { code: err.code, out: err.message };
-    return { code: 1, out: err instanceof Error ? err.message : String(err) };
+    const code = err instanceof CliError ? err.code : 1;
+    const slug = err instanceof CliError ? err.slug : 'error';
+    const message = err instanceof Error ? err.message : String(err);
+    return { code, out: asText({ error: { code: slug, message } }) };
   }
 };
 

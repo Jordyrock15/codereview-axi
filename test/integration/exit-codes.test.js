@@ -72,7 +72,7 @@ test('exit 1 for an unknown verb', async () => {
   assert.match(result.out, /usage: cr/);
 });
 
-test('exit 2 for a clean working tree', async (t) => {
+test('exit 1 with the nothing-to-review slug for a clean working tree', async (t) => {
   const repo = await makeRepo({ 'a.js': 'one\n' });
   /** @type {NodeJS.ProcessEnv} */
   let env;
@@ -82,9 +82,10 @@ test('exit 2 for a clean working tree', async (t) => {
   t.after(repo.cleanup);
 
   env = await home();
-  const result = await runIn(repo.dir, ['open'], env);
-  assert.equal(result.code, 2);
+  const result = await runIn(repo.dir, ['open', '--json'], env);
+  assert.equal(result.code, 1);
   assert.match(result.out, /nothing to review/);
+  assert.equal(JSON.parse(result.out).error.code, 'nothing-to-review');
 });
 
 test('exit 1 for a verb with no open session', async (t) => {
@@ -118,7 +119,7 @@ test('open self-heals when server.json points at a dead port', async (t) => {
   // src/cli/client.js, is unconditional self-healing: probe(1) fails fast,
   // the stale server.json is removed, and findPort(DEFAULT_PORT) hands back
   // a genuinely free port. This test exercises exactly that path, and only
-  // that path; it is not a test of exit 3.
+  // that path; it is not a test of the server-unreachable slug.
   const result = await runIn(repo.dir, ['open'], env);
   assert.equal(result.code, 0, `expected self-healing recovery, got ${result.code}: ${result.out}`);
 });

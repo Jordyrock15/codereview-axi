@@ -41,7 +41,7 @@ export const VERBS = {
 };
 
 /** Accepted everywhere, so no verb has to declare them. */
-const UNIVERSAL = ['help'];
+const UNIVERSAL = ['help', 'json'];
 
 /**
  * @param {string} verb
@@ -77,6 +77,8 @@ export const USAGE = [
   ...Object.entries(VERBS).map(([verb, spec]) => `  ${verb.padEnd(widest + 2)} ${spec.summary}`),
   '',
   'run `cr <verb> --help` for a verb\'s flags',
+  '',
+  'every verb accepts --json to print JSON instead of TOON',
   '',
   'exit codes: 0 ok, 1 error, 2 unknown flag; the error code says which error',
 ].join('\n');
