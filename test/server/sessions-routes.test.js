@@ -111,6 +111,28 @@ test('POST /api/sessions with an unrelated-history base gives its own 400, disti
   assert.doesNotMatch(res.json.error, /fetch/i, 'unrelated histories are not a fetch problem');
 });
 
+// A 105MB diff in the wild hit MAX_BUFFER inside git() and surfaced as a bare
+// `{"error":"internal error"}` 500. Reproduced for real: a file rewritten
+// large enough that `git diff` alone overruns the buffer.
+test('POST /api/sessions gives a legible 413 for a diff that overruns the buffer, not a bare 500', async (t) => {
+  const { MAX_BUFFER } = await import('../../src/diff/git.js');
+  const repo = await makeRepo({ 'big.txt': 'stub\n' });
+  t.after(repo.cleanup);
+
+  const target = MAX_BUFFER + (5 * 1024 * 1024);
+  let out = '';
+  let i = 0;
+  while (out.length < target) { out += `line ${i} filler filler filler\n`; i += 1; }
+  await repo.write('big.txt', out);
+
+  const { call } = await startApp(t);
+  const res = await call('POST', '/api/sessions', { repo: repo.dir, note: '' });
+
+  assert.equal(res.status, 413);
+  assert.match(res.json.error, /buffer/i);
+  assert.doesNotMatch(res.json.error, /^internal error$/, 'must name the reason, not the generic fallback');
+});
+
 test('a base session with no divergence says the branch has no changes, not that the working tree is clean', async (t) => {
   const repo = await makeRepo({ 'a.js': 'one\n' });
   t.after(repo.cleanup);

@@ -22,8 +22,9 @@ import { shQuote } from '../shell.js';
 
 /**
  * `mergeBase` (via `buildSnapshot`) discriminates a missing ref from unrelated
- * histories and tags each with a `crReason`; without this the route mapped
- * both, along with everything else, to a bare 500 internal error.
+ * histories, and `git()` itself tags a diff that overran the buffer; without
+ * this the route mapped all of it, along with everything else, to a bare 500
+ * internal error.
  *
  * `base` reaches this message unsanitised: for a `--pr` session it is a PR's
  * base branch name, read via `gh`, and so no more trustworthy than the diff
@@ -34,8 +35,19 @@ import { shQuote } from '../shell.js';
  * @returns {unknown} A `StateError` when the failure is base-related, the original error otherwise.
  */
 const translateBaseFailure = (err, base) => {
-  if (base === undefined || !(err instanceof Error)) return err;
+  if (!(err instanceof Error)) return err;
   const reason = /** @type {any} */ (err).crReason;
+
+  // Independent of whether a base is even in play: a plain working diff can
+  // overrun the buffer just as easily as a PR's.
+  if (reason === 'max-buffer') {
+    const hint = base !== undefined
+      ? ` Try a narrower base, for example a more recent commit than ${shQuote(base)}.`
+      : ' Try reviewing a narrower diff.';
+    return new StateError(413, `${err.message}.${hint}`);
+  }
+
+  if (base === undefined) return err;
   if (reason === 'missing-ref') {
     return new StateError(400, `${err.message}. For a pull request this usually means the base branch has not been fetched, try git fetch origin ${shQuote(base)}.`);
   }
@@ -122,6 +134,25 @@ export const createApp = ({
     const supplied = String(body?.quote ?? '').split('\n').length;
     if (supplied !== expected) {
       throw new StateError(400, `quote has ${supplied} line(s) but the range covers ${expected}`);
+    }
+  };
+
+  const SCOPES = ['line', 'file', 'session'];
+  const SIDES = ['old', 'new'];
+
+  /**
+   * Both fields are persisted unvalidated today and handed straight to the
+   * agent; neither reaches a dangerous sink (the code only ever tests
+   * `=== 'new'` or `=== 'session'`), but an arbitrary string still has no
+   * business surviving into stored state.
+   * @param {any} body
+   * @returns {void}
+   */
+  const requireCommentShape = (body) => {
+    const scope = body?.scope ?? 'line';
+    if (!SCOPES.includes(scope)) throw new StateError(400, `scope must be one of ${SCOPES.join(', ')}`);
+    if (scope === 'line' && body?.side !== undefined && !SIDES.includes(body.side)) {
+      throw new StateError(400, `side must be one of ${SIDES.join(', ')}`);
     }
   };
 
@@ -279,6 +310,7 @@ export const createApp = ({
       pattern: '/api/sessions/:key/comments',
       handler: async (ctx) => {
         const session = requireOpen(await guarded(ctx));
+        requireCommentShape(ctx.body ?? {});
         // A traversing path here would be read back later by the pending poll.
         if ((ctx.body?.scope ?? 'line') !== 'session') requireDiffFile(session, ctx.body?.file);
         requireQuoteShape(ctx.body ?? {});
@@ -448,6 +480,10 @@ export const createApp = ({
           'Cache-Control': 'no-store',
           'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'",
           'X-Frame-Options': 'DENY',
+          // The session token lives in this URL's own query string; no-referrer
+          // is the belt to the CSP's braces so it never leaks via a Referer header.
+          'Referrer-Policy': 'no-referrer',
+          'X-Content-Type-Options': 'nosniff',
         });
         res.end(html);
       },
@@ -462,6 +498,8 @@ export const createApp = ({
           'Content-Type': asset.type,
           'Content-Length': Buffer.byteLength(asset.body),
           'Cache-Control': 'no-store',
+          'Referrer-Policy': 'no-referrer',
+          'X-Content-Type-Options': 'nosniff',
         });
         res.end(asset.body);
       },

@@ -13,6 +13,7 @@ import {
   isBinaryPath,
   currentBranch,
   isOptionShaped,
+  MAX_BUFFER,
 } from '../../src/diff/git.js';
 
 test('toplevel returns the worktree root', async (t) => {
@@ -272,4 +273,28 @@ test('a path escaping with .. is refused', async (t) => {
   const result = await readWorkingFile(repo.dir, `../${path.basename(outside)}`);
   assert.notEqual(result, 'SECRET\n');
   assert.equal(result, null);
+});
+
+// A 105MB diff in the wild hit MAX_BUFFER and surfaced as a bare `{"error":
+// "internal error"}` 500, because Node's own error carries nothing a caller
+// can act on. This reproduces the trigger for real: one file rewritten with
+// enough unique content that `git diff` alone exceeds the buffer.
+test('diffWorking tags a MAX_BUFFER overrun with a reason the server route can translate', async (t) => {
+  const repo = await makeRepo({ 'big.txt': 'stub\n' });
+  t.after(repo.cleanup);
+
+  const target = MAX_BUFFER + (5 * 1024 * 1024);
+  let out = '';
+  let i = 0;
+  while (out.length < target) { out += `line ${i} filler filler filler\n`; i += 1; }
+  await repo.write('big.txt', out);
+
+  await assert.rejects(
+    () => diffWorking(repo.dir),
+    (/** @type {any} */ err) => {
+      assert.equal(err.crReason, 'max-buffer');
+      assert.match(err.message, /buffer/);
+      return true;
+    },
+  );
 });

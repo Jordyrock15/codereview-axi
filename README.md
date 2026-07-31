@@ -97,6 +97,7 @@ Every exit-1 error is `{error: {code, message}}` in TOON or JSON. The slugs it u
 | `agent-waiting` | another agent already holds the poll on this session; retry later |
 | `invalid-input` | the server rejected the request body itself, for example an unrecognised `--status` value |
 | `conflict` | the request conflicts with the session's current state some other way, for example reopening with a different base, or replying to a comment that is not awaiting one |
+| `diff-too-large` | the diff overran git's output buffer; try a narrower base or a smaller diff |
 | `server-error` | the server rejected the request in a way none of the above covers |
 | `error` | an unexpected internal failure the CLI did not classify; report it as a bug rather than branching on it |
 

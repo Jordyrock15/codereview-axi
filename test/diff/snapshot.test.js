@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeRepo } from '../helpers/repo.js';
-import { buildSnapshot } from '../../src/diff/snapshot.js';
+import {
+  buildSnapshot, tagDuplicatePaths, LARGE_FILE_LINES, LARGE_FILE_BYTES,
+} from '../../src/diff/snapshot.js';
 
 /**
  * @param {any} snapshot
@@ -169,4 +171,83 @@ test('a new untracked file with an accented name is readable through the same pa
 
   assert.ok(file, 'an untracked accented filename must appear under its real name');
   assert.equal(await readWorkingFile(repo.dir, file.path), 'fresh\n');
+});
+
+// The line-count guard alone never sees this: `added` is 1. A single
+// pathologically long line is exactly what the highlighter amplifies into
+// millions of DOM nodes, so the byte total has to catch what the line count cannot.
+test('tags a file with one enormous line as large, even though its line count is tiny', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  const huge = '"'.repeat(LARGE_FILE_BYTES + 1);
+  await repo.write('big-line.js', `${huge}\n`);
+
+  const file = find(await buildSnapshot(repo.dir), 'big-line.js');
+  assert.equal(file.added, 1, 'one added line, well under the line-count threshold');
+  assert.ok(file.tags.includes('large'), 'the byte total must still trip the guard');
+});
+
+test('a tracked file rewritten with one enormous line is tagged large by byte total, not line count', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'stub\n' });
+  t.after(repo.cleanup);
+  const huge = 'x'.repeat(LARGE_FILE_BYTES + 1);
+  await repo.write('a.js', `${huge}\n`);
+
+  const file = find(await buildSnapshot(repo.dir), 'a.js');
+  assert.equal(file.added + file.removed <= LARGE_FILE_LINES, true, 'line count alone would not trip the guard');
+  assert.ok(file.tags.includes('large'));
+});
+
+test('tagDuplicatePaths leaves distinct paths untouched', () => {
+  const files = /** @type {any[]} */ ([
+    { path: 'a.js', tags: [] },
+    { path: 'b.js', tags: [] },
+  ]);
+  tagDuplicatePaths(files);
+  assert.deepEqual(files.map((f) => f.path), ['a.js', 'b.js']);
+  assert.deepEqual(files.map((f) => f.tags), [[], []]);
+});
+
+// Every downstream lookup (`.find`, `requireDiffFile`, `draftKey`) is keyed
+// by path and takes the first match, so two entries sharing a path is not a
+// cosmetic bug, it is the second file becoming permanently unreachable. The
+// guard must leave no two entries answering to the same path afterwards.
+test('tagDuplicatePaths renames every entry past the first and tags every one of them', () => {
+  const files = /** @type {any[]} */ ([
+    { path: 'x.js', tags: [], marker: 'first' },
+    { path: 'x.js', tags: [], marker: 'second' },
+    { path: 'x.js', tags: [], marker: 'third' },
+    { path: 'y.js', tags: [], marker: 'unrelated' },
+  ]);
+  tagDuplicatePaths(files);
+
+  const paths = files.map((f) => f.path);
+  assert.equal(new Set(paths).size, paths.length, 'no two entries may share a path afterwards');
+  assert.equal(files[0].path, 'x.js', 'the first occurrence keeps its real path');
+  assert.ok(files[0].tags.includes('duplicate-path'));
+  assert.ok(files[1].tags.includes('duplicate-path'));
+  assert.ok(files[2].tags.includes('duplicate-path'));
+  assert.equal(files[3].tags.includes('duplicate-path'), false, 'an unrelated path is left alone');
+});
+
+// The parser fix (see parse.test.js) means a real `git diff` can no longer
+// produce two entries for the same path from a decoy directory: the +++ line
+// gives the decoy its own distinct name. This proves the pipeline end to end
+// with the attack from the brief, and that the real file's own content is
+// what shows up under its own name, not the decoy's.
+test('buildSnapshot against a real decoy directory keeps the two files distinct', async (t) => {
+  const repo = await makeRepo({ 'index.js': 'safe\n', 'decoy b/index.js': 'harmless\n' });
+  t.after(repo.cleanup);
+  await repo.write('index.js', 'SECRET_PAYLOAD\n');
+  await repo.write('decoy b/index.js', 'decoy changed\n');
+
+  const snapshot = await buildSnapshot(repo.dir);
+  const real = find(snapshot, 'index.js');
+  const decoy = find(snapshot, 'decoy b/index.js');
+
+  assert.ok(real, 'the real file must appear under its own path');
+  assert.ok(decoy, 'the decoy must appear under its own path, not collide with the real one');
+  assert.notEqual(real.path, decoy.path);
+  assert.ok(real.hunks[0].lines.some((/** @type {any} */ l) => l.kind === 'add' && l.text === 'SECRET_PAYLOAD'));
+  assert.ok(decoy.hunks[0].lines.some((/** @type {any} */ l) => l.kind === 'add' && l.text === 'decoy changed'));
 });

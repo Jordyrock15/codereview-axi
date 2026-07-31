@@ -69,6 +69,16 @@ test('detects deletions', () => {
   assert.equal(file.added, 0);
 });
 
+// The fixture's trailing newline, once split on '\n', leaves an empty final
+// element that is not a line at all. Left in, it reads as a phantom context
+// row one past the end of the file, numbered 0 on the old side because the
+// last hunk here is del-only and never touches oldLine's running count.
+test('drops the trailing artefact of a final newline rather than a phantom context row', () => {
+  const [file] = parseUnifiedDiff(fixture('deleted'));
+  assert.equal(file.hunks[0].lines.length, 2, 'exactly the two deleted lines, no trailing phantom row');
+  assert.equal(file.hunks[0].lines.every((l) => l.oldLine !== 0), true, 'no row numbered 0');
+});
+
 test('ignores the no-newline marker without counting it as a line', () => {
   const [file] = parseUnifiedDiff(fixture('no-newline'));
   assert.equal(file.added, 1);
@@ -219,4 +229,122 @@ test('a file whose quoted header cannot be decoded surfaces as a tagged entry, n
   assert.equal(file.path === '', false, 'must never hand back an empty path');
   assert.deepEqual(file.tags, ['unparsable']);
   assert.deepEqual(file.hunks, []);
+});
+
+// Real output of `git -c core.quotePath=false diff HEAD` from a repo containing
+// a decoy directory `decoy b/` alongside a genuinely modified `index.js`. Before
+// the fix, the greedy `a\/(.+) b\/(.+)$` match on the `diff --git` line splits
+// at the LAST ` b/`, so the decoy's header parses as path "index.js" too, and
+// `.find()`-based lookups downstream then never reach the real index.js entry.
+test('a decoy directory named to end in " b/" cannot steal another file\'s path', () => {
+  const diff = [
+    'diff --git a/decoy b/index.js b/decoy b/index.js',
+    'index af4c3e6..9c0c907 100644',
+    '--- a/decoy b/index.js\t',
+    '+++ b/decoy b/index.js\t',
+    '@@ -1 +1 @@',
+    '-harmless',
+    '+decoy changed',
+    'diff --git a/index.js b/index.js',
+    'index b7767f6..0a3fae5 100644',
+    '--- a/index.js',
+    '+++ b/index.js',
+    '@@ -1 +1 @@',
+    '-safe',
+    '+SECRET_PAYLOAD',
+    '',
+  ].join('\n');
+
+  const [decoy, real] = parseUnifiedDiff(diff);
+  assert.equal(decoy.path, 'decoy b/index.js');
+  assert.equal(real.path, 'index.js', 'the real file must keep its own path, not the decoy\'s');
+  assert.notEqual(decoy.path, real.path);
+  assert.equal(real.hunks[0].lines.some((l) => l.kind === 'add' && l.text === 'SECRET_PAYLOAD'), true);
+});
+
+test('a deletion takes its path from --- a/, since +++ is /dev/null', () => {
+  const diff = [
+    'diff --git a/decoy b/gone.js b/decoy b/gone.js',
+    'deleted file mode 100644',
+    'index 5555555..0000000',
+    '--- a/decoy b/gone.js',
+    '+++ /dev/null',
+    '@@ -1,1 +0,0 @@',
+    '-const gone = true;',
+    '',
+  ].join('\n');
+
+  const [file] = parseUnifiedDiff(diff);
+  assert.equal(file.status, 'deleted');
+  assert.equal(file.path, 'decoy b/gone.js');
+});
+
+test('a rename with content changes takes its path from +++ b/, not the diff --git line', () => {
+  const diff = [
+    'diff --git a/old.js b/decoy b/new.js',
+    'similarity index 92%',
+    'rename from old.js',
+    'rename to decoy b/new.js',
+    'index 1111111..2222222 100644',
+    '--- a/old.js',
+    '+++ b/decoy b/new.js',
+    '@@ -1 +1 @@',
+    '-const a = 1;',
+    '+const a = 2;',
+    '',
+  ].join('\n');
+
+  const [file] = parseUnifiedDiff(diff);
+  assert.equal(file.status, 'renamed');
+  assert.equal(file.oldPath, 'old.js');
+  assert.equal(file.path, 'decoy b/new.js');
+});
+
+// Binary and mode-only changes carry no ---/+++ line, so the diff --git line
+// is the only source left. A binary decoy has no rename info to disambiguate
+// with, so the fallback must pick the split where both sides agree, not the
+// greedy (last) or naive (first) one.
+test('a binary decoy resolves via the diff --git line\'s matching-halves candidate', () => {
+  const diff = [
+    'diff --git a/decoy b/index.js b/decoy b/index.js',
+    'index 96db3e1..698ec4e 100644',
+    'Binary files a/decoy b/index.js and b/decoy b/index.js differ',
+    '',
+  ].join('\n');
+
+  const [file] = parseUnifiedDiff(diff);
+  assert.equal(file.path, 'decoy b/index.js');
+  assert.equal(file.binary, true);
+});
+
+test('a quoted non-ASCII path arriving on the +++ line decodes correctly', () => {
+  const diff = [
+    'diff --git "a/caf\\303\\251.js" "b/caf\\303\\251.js"',
+    'index 0000000..1111111 100644',
+    '--- "a/caf\\303\\251.js"',
+    '+++ "b/caf\\303\\251.js"',
+    '@@ -1 +1 @@',
+    '-old',
+    '+new',
+    '',
+  ].join('\n');
+
+  const [file] = parseUnifiedDiff(diff);
+  assert.equal(file.path, 'café.js');
+});
+
+test('a --- / +++ path containing a space carries git\'s trailing tab, which must not become part of the path', () => {
+  const diff = [
+    'diff --git a/my file.js b/my file.js',
+    'index 5626abf..f719efd 100644',
+    '--- a/my file.js\t',
+    '+++ b/my file.js\t',
+    '@@ -1 +1 @@',
+    '-one',
+    '+two',
+    '',
+  ].join('\n');
+
+  const [file] = parseUnifiedDiff(diff);
+  assert.equal(file.path, 'my file.js');
 });

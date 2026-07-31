@@ -6,7 +6,7 @@
  * @typedef {import('../../types.js').Comment} Comment
  */
 
-import { highlight } from './highlight.js';
+import { renderLine } from './highlight.js';
 import { pairLines } from './pair.js';
 
 const key = document.body.dataset.key;
@@ -424,7 +424,12 @@ const renderRow = (file, line0, hunkIndex) => {
   const oldNo = el('span', 'n', line0.oldLine === null ? '' : String(line0.oldLine));
   const newNo = el('span', 'n', line0.newLine === null ? '' : String(line0.newLine));
   const cell = el('span', 't');
-  cell.innerHTML = highlight(line0.text);
+  const rendered = renderLine(line0.text);
+  cell.innerHTML = rendered.html;
+  // The truncation mark is CSS-generated content, not a child node: this cell's
+  // textContent is read back verbatim as the quote for a new comment, and a
+  // literal "(line truncated)" suffix baked into a text node would corrupt it.
+  if (rendered.truncated) cell.classList.add('truncated');
   row.append(oldNo, newNo, cell);
 
   row.dataset.file = file.path;
@@ -460,7 +465,12 @@ const renderSplitRow = (file, pair, hunkIndex) => {
     const lineNo = line === null ? null : (side === 'old' ? line.oldLine : line.newLine);
     const no = el('span', 'n', lineNo === null ? '' : String(lineNo));
     const text = el('span', `t ${line === null ? 'blank' : line.kind}`);
-    if (line !== null) text.innerHTML = highlight(line.text);
+    if (line !== null) {
+      const rendered = renderLine(line.text);
+      text.innerHTML = rendered.html;
+      // CSS-generated content, not a child node — see renderRow for why.
+      if (rendered.truncated) text.classList.add('truncated');
+    }
     text.dataset.side = side;
     if (line !== null) no.addEventListener('click', pickHandler(file, row, side, lineNo));
     return [no, text];

@@ -144,6 +144,10 @@ main { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); mi
 .row.split > .t.add { background: var(--add-bg); color: var(--add); }
 .row.split > .t.picked { box-shadow: inset 3px 0 0 var(--accent); }
 
+/* Generated content, not a text node: the cell's textContent is read back
+   verbatim as a new comment's quote, so the mark must never become part of it. */
+.t.truncated::after { content: ' … (line truncated)'; color: var(--mid); font-style: italic; }
+
 .expand { color: var(--mid); padding: 4px 12px; cursor: pointer; background: none; border: 0; font: inherit; }
 .large { padding: 16px; color: var(--mid); }
 

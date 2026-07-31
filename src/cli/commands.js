@@ -92,7 +92,7 @@ const fieldsFrom = (flags) => {
  */
 export const ERROR_SLUGS = [
   'usage', 'state', 'nothing-to-review', 'server-unreachable', 'bad-response',
-  'not-found', 'invalid-input', 'session-closed', 'agent-waiting', 'conflict', 'server-error', 'error',
+  'not-found', 'invalid-input', 'session-closed', 'agent-waiting', 'conflict', 'diff-too-large', 'server-error', 'error',
 ];
 
 /**
@@ -105,6 +105,7 @@ export const ERROR_SLUGS = [
 const slugForStatus = (status, message) => {
   if (status === 404) return 'not-found';
   if (status === 400) return 'invalid-input';
+  if (status === 413) return 'diff-too-large';
   if (status === 409) {
     if (message.includes('session is closed')) return 'session-closed';
     if (message.includes('another agent is waiting')) return 'agent-waiting';

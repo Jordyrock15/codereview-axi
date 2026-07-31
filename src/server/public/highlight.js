@@ -1,3 +1,10 @@
+// A single pathologically long line (an 8MB line of quote characters has been
+// seen in the wild) is exactly what highlighting amplifies: each match spawns
+// a span, so highlighting is the multiplier, not just the row's text length.
+// Capping and skipping highlighting altogether is what keeps one such line
+// from turning into millions of DOM nodes.
+export const LINE_CAP = 2000;
+
 /** @type {Array<[string, RegExp]>} */
 const PATTERNS = [
   ['comment', /(\/\/[^\n]*|\/\*[\s\S]*?\*\/|#[^\n]*)/],
@@ -39,3 +46,21 @@ export const highlight = (text) => {
 
   return out + escape(text.slice(last));
 };
+
+/**
+ * @typedef {Object} RenderedLine
+ * @property {string} html — Safe for innerHTML.
+ * @property {boolean} truncated — True when the line was cut at `LINE_CAP`.
+ */
+
+/**
+ * A row renderer's entry point: never highlights past the cap, since
+ * highlighting is what turns one enormous line into millions of DOM nodes.
+ * @param {string} text
+ * @returns {RenderedLine}
+ */
+export const renderLine = (text) => (
+  text.length > LINE_CAP
+    ? { html: escape(text.slice(0, LINE_CAP)), truncated: true }
+    : { html: highlight(text), truncated: false }
+);

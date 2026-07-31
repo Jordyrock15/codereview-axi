@@ -5,7 +5,7 @@ import path from 'node:path';
 
 const exec = promisify(execFile);
 
-const MAX_BUFFER = 64 * 1024 * 1024;
+export const MAX_BUFFER = 64 * 1024 * 1024;
 
 /**
  * @param {string} cwd
@@ -13,8 +13,21 @@ const MAX_BUFFER = 64 * 1024 * 1024;
  * @returns {Promise<string>}
  */
 const git = async (cwd, args) => {
-  const { stdout } = await exec('git', args, { cwd, maxBuffer: MAX_BUFFER });
-  return stdout;
+  try {
+    const { stdout } = await exec('git', args, { cwd, maxBuffer: MAX_BUFFER });
+    return stdout;
+  } catch (/** @type {any} */ err) {
+    // Node's own message here is generic ("stdout maxBuffer length exceeded")
+    // and carries no reason a caller can act on; tag it the same way a base
+    // failure is tagged, so the server route can turn it into a 413 that
+    // names the limit rather than a bare 500.
+    if (err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+      const wrapped = new Error(`git output exceeded the ${MAX_BUFFER}-byte buffer`);
+      /** @type {any} */ (wrapped).crReason = 'max-buffer';
+      throw wrapped;
+    }
+    throw err;
+  }
 };
 
 /**

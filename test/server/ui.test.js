@@ -47,6 +47,16 @@ test('GET /session/:key carries CSP and X-Frame-Options headers', async (t) => {
   assert.equal(res.headers.get('x-frame-options'), 'DENY');
 });
 
+// The session token lives in this URL's own query string, so a referrer leak
+// to any third party a linked asset might point at would hand it over intact.
+test('GET /session/:key carries Referrer-Policy and X-Content-Type-Options headers', async (t) => {
+  const { base, key, token } = await setup(t);
+  const res = await fetch(`${base}/session/${key}?t=${token}`);
+
+  assert.equal(res.headers.get('referrer-policy'), 'no-referrer');
+  assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+});
+
 test('GET /session/:key 404s a crafted, non-existent key rather than rendering a page', async (t) => {
   const { base, key } = await setup(t);
   const crafted = `${key}" onload="fetch('http://evil')`;
@@ -76,6 +86,14 @@ test('assets are served with correct content types and no directory traversal', 
 
   assert.equal((await fetch(`${base}/assets/..%2f..%2fpackage.json`)).status, 404);
   assert.equal((await fetch(`${base}/assets/nope.js`)).status, 404);
+});
+
+test('assets carry Referrer-Policy and X-Content-Type-Options headers', async (t) => {
+  const { base } = await setup(t);
+  const res = await fetch(`${base}/assets/app.js`);
+
+  assert.equal(res.headers.get('referrer-policy'), 'no-referrer');
+  assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
 });
 
 test('GET context returns the requested working-tree lines', async (t) => {

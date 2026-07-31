@@ -46,6 +46,27 @@ test('POST comments rejects an empty body and an unknown verdict', async (t) => 
   assert.equal((await call('POST', at('/comments'), lineBody({ verdict: 'maybe' }))).status, 400);
 });
 
+test('POST comments rejects an unrecognised scope', async (t) => {
+  const { call, at } = await setup(t);
+  const res = await call('POST', at('/comments'), lineBody({ scope: 'paragraph' }));
+  assert.equal(res.status, 400);
+  assert.match(res.json.error, /scope must be one of/);
+});
+
+test('POST comments rejects an unrecognised side on a line-scope comment', async (t) => {
+  const { call, at } = await setup(t);
+  const res = await call('POST', at('/comments'), lineBody({ side: 'sideways' }));
+  assert.equal(res.status, 400);
+  assert.match(res.json.error, /side must be one of/);
+});
+
+test('POST comments still accepts the documented scopes and sides', async (t) => {
+  const { call, at } = await setup(t);
+  assert.equal((await call('POST', at('/comments'), lineBody({ side: 'old', startLine: 1, endLine: 1, quote: 'one' }))).status, 201);
+  assert.equal((await call('POST', at('/comments'), { scope: 'file', file: 'a.js', body: 'file note', verdict: 'explain' })).status, 201);
+  assert.equal((await call('POST', at('/comments'), { scope: 'session', body: 'overall', verdict: 'ignore' })).status, 201);
+});
+
 test('POST comments refuses to add to a closed session', async (t) => {
   const { call, at } = await setup(t);
   await call('POST', at('/close'), { closedBy: 'human' });
