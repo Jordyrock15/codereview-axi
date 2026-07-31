@@ -139,6 +139,58 @@ test('GET stream 401s without a token', async (t) => {
   assert.equal(res.status, 401);
 });
 
+test('POST comments refuses a quote whose line count does not match the range', async (t) => {
+  const { call, at } = await setup(t);
+
+  const res = await call('POST', at('/comments'), {
+    scope: 'line', file: 'a.js', side: 'new', startLine: 2, endLine: 4,
+    quote: 'TWO', body: 'three lines claimed, one supplied', verdict: 'fix',
+  });
+
+  assert.equal(res.status, 400);
+  assert.match(res.json.error, /quote/);
+});
+
+test('POST comments refuses an empty quote on a line comment', async (t) => {
+  const { call, at } = await setup(t);
+
+  const res = await call('POST', at('/comments'), {
+    scope: 'line', file: 'a.js', side: 'new', startLine: 2, endLine: 2,
+    quote: '', body: 'no quote at all', verdict: 'fix',
+  });
+
+  assert.equal(res.status, 400);
+});
+
+test('POST comments accepts a multi-line quote matching its range', async (t) => {
+  const { call, at } = await setup(t);
+
+  const res = await call('POST', at('/comments'), {
+    scope: 'line', file: 'a.js', side: 'new', startLine: 1, endLine: 2,
+    quote: 'one\nTWO', body: 'two lines, two supplied', verdict: 'fix',
+  });
+
+  assert.equal(res.status, 201);
+  assert.equal(res.json.endLine, 2);
+});
+
+test('PATCH comments refuses a quote that no longer matches its range', async (t) => {
+  const { call, at } = await setup(t);
+  await call('POST', at('/comments'), {
+    scope: 'line', file: 'a.js', side: 'new', startLine: 2, endLine: 2,
+    quote: 'TWO', body: 'x', verdict: 'fix',
+  });
+
+  const res = await call('PATCH', at('/comments/1'), { quote: 'TWO\nthree' });
+  assert.equal(res.status, 400);
+});
+
+test('a session-scope comment needs no quote', async (t) => {
+  const { call, at } = await setup(t);
+  const res = await call('POST', at('/comments'), { scope: 'session', body: 'overall note', verdict: 'explain' });
+  assert.equal(res.status, 201);
+});
+
 test('PATCH note replaces the note and publishes it', async (t) => {
   const { call, at, hub } = await setup(t);
   /** @type {string[]} */

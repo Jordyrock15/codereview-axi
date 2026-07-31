@@ -50,8 +50,8 @@ const el = (tag, className, text) => {
   return node;
 };
 
-/** @type {{file: string|null, side: 'old'|'new', start: number|null, end: number|null}} */
-const picking = { file: null, side: 'new', start: null, end: null };
+/** @type {{file: string|null, side: 'old'|'new', start: number|null, end: number|null, hunk: string|null}} */
+const picking = { file: null, side: 'new', start: null, end: null, hunk: null };
 
 /**
  * In-progress composer text survives a re-render only if it is kept outside
@@ -74,6 +74,7 @@ const clearPick = () => {
   picking.file = null;
   picking.start = null;
   picking.end = null;
+  picking.hunk = null;
   document.querySelector('.thread.composer')?.remove();
   for (const row of document.querySelectorAll('.row.picked')) row.classList.remove('picked');
 };
@@ -119,24 +120,49 @@ const renderFiles = () => {
 };
 
 /**
- * The exact source text of the selected lines: this is what re-anchoring
- * later relies on to find the comment again after the code has moved.
- * @param {SnapshotFile} file
+ * @param {HTMLElement} pane
+ * @returns {HTMLElement[]}
+ */
+const selectionRows = (pane) => [.../** @type {NodeListOf<HTMLElement>} */ (pane.querySelectorAll('.row'))];
+
+/**
+ * The unified view has one text cell per row. Split view (Task 3) reads a
+ * different cell depending on which side was picked; this is the seam for it.
+ * @param {HTMLElement} row
+ * @param {'old'|'new'} side
  * @returns {string}
  */
-const quoteFor = (file) => {
-  const from = Math.min(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
-  const to = Math.max(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
-  /** @type {string[]} */
-  const texts = [];
+const textOf = (row, side) => row.querySelector('.t')?.textContent ?? '';
 
-  for (const hunk of file.hunks) {
-    for (const l of hunk.lines) {
-      const number = picking.side === 'new' ? l.newLine : l.oldLine;
-      if (number !== null && number >= from && number <= to) texts.push(l.text);
-    }
+/**
+ * The rows are what the human saw and chose. Reading the quote from them rather
+ * than from file.hunks is what makes expanded context and hunk edges correct.
+ *
+ * Contiguity is judged by hunk membership, not by adjacency within the row
+ * list: a deleted line has no new-side number and so is skipped when building
+ * a new-side quote, but that skip does not break contiguity, the deleted text
+ * is genuinely absent from the new file. What does break it is a range that
+ * reaches into a different hunk, since the lines omitted between two hunks
+ * are real, unselected lines the quote would otherwise silently drop.
+ * @param {'old'|'new'} side
+ * @param {number} from
+ * @param {number} to
+ * @returns {{quote: string, contiguous: boolean}}
+ */
+const quoteFromRows = (side, from, to) => {
+  const rows = selectionRows($('diff'));
+  const key = side === 'new' ? 'newLine' : 'oldLine';
+
+  /** @type {number[]} */
+  const chosen = [];
+  for (let i = 0; i < rows.length; i += 1) {
+    const n = Number(rows[i].dataset[key] || 0);
+    if (Number.isInteger(n) && n >= from && n <= to) chosen.push(i);
   }
-  return texts.join('\n');
+
+  const contiguous = chosen.length > 0 && chosen.every((index) => rows[index].dataset.hunk === rows[chosen[0]].dataset.hunk);
+  const quote = chosen.map((i) => textOf(rows[i], side)).join('\n');
+  return { quote, contiguous };
 };
 
 /**
@@ -176,19 +202,34 @@ const openComposer = (file, afterRow) => {
   }
   box.append(verdicts);
 
+  const warn = el('div', 'warn');
+  box.append(warn);
+
   const actions = el('div', 'actions');
   const save = /** @type {HTMLButtonElement} */ (el('button', '', 'Save'));
   const cancel = el('button', '', 'Cancel');
 
   save.addEventListener('click', async () => {
     if (text.value.trim() === '') { text.focus(); return; }
+
+    // Read live: a shift-extend since the composer opened only moves
+    // picking.end, it does not rebuild this handler's closure.
+    const start = Math.min(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
+    const end = Math.max(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
+    const { quote, contiguous } = quoteFromRows(picking.side, start, end);
+
+    if (!contiguous || quote === '') {
+      warn.textContent = 'Selection is not contiguous. Pick a single unbroken range and try again.';
+      return;
+    }
+
     save.disabled = true;
 
     const res = await api('/comments', {
       method: 'POST',
       body: JSON.stringify({
         scope: 'line', file: file.path, side: picking.side,
-        startLine: from, endLine: to, quote: quoteFor(file), body: text.value, verdict,
+        startLine: start, endLine: end, quote, body: text.value, verdict,
       }),
     });
 
@@ -305,9 +346,10 @@ const renderThreadsImpl = (pane, file) => {
 /**
  * @param {SnapshotFile} file
  * @param {DiffLine} line0
+ * @param {number} hunkIndex
  * @returns {HTMLElement}
  */
-const renderRow = (file, line0) => {
+const renderRow = (file, line0, hunkIndex) => {
   const row = el('div', `row ${line0.kind}`);
   const oldNo = el('span', 'n', line0.oldLine === null ? '' : String(line0.oldLine));
   const newNo = el('span', 'n', line0.newLine === null ? '' : String(line0.newLine));
@@ -318,6 +360,7 @@ const renderRow = (file, line0) => {
   row.dataset.file = file.path;
   row.dataset.newLine = String(line0.newLine ?? '');
   row.dataset.oldLine = String(line0.oldLine ?? '');
+  row.dataset.hunk = String(hunkIndex);
 
   const pick = (/** @type {'old'|'new'} */ side) => (/** @type {MouseEvent} */ event) => {
     const line = Number(side === 'new' ? line0.newLine : line0.oldLine);
@@ -325,7 +368,11 @@ const renderRow = (file, line0) => {
 
     // The side must match too: the old and new gutters are adjacent columns, so
     // extending across them would build a quote for code the human never chose.
-    const shiftExtend = event.shiftKey && picking.start !== null && picking.file === file.path && side === picking.side;
+    // The hunk must match as well: crossing into another hunk starts a fresh
+    // selection rather than silently splicing out the unchanged gap between them.
+    const sameHunk = row.dataset.hunk === picking.hunk;
+    const shiftExtend = event.shiftKey && picking.start !== null
+      && picking.file === file.path && side === picking.side && sameHunk;
 
     if (shiftExtend) {
       picking.end = line;
@@ -334,6 +381,7 @@ const renderRow = (file, line0) => {
       picking.side = side;
       picking.start = line;
       picking.end = line;
+      picking.hunk = row.dataset.hunk ?? null;
     }
     paintPick();
 
@@ -379,12 +427,12 @@ const renderDiff = () => {
     return;
   }
 
-  for (const hunk of file.hunks) {
+  file.hunks.forEach((hunk, hunkIndex) => {
     const expand = el('button', 'expand', `⋯ ${hunk.header || `line ${hunk.newStart}`} ⋯`);
-    expand.addEventListener('click', () => expandAbove(file, hunk, pane, expand));
+    expand.addEventListener('click', () => expandAbove(file, hunk, hunkIndex, pane, expand));
     pane.append(expand);
-    for (const line of hunk.lines) pane.append(renderRow(file, line));
-  }
+    for (const line of hunk.lines) pane.append(renderRow(file, line, hunkIndex));
+  });
 
   renderThreadsImpl(pane, file);
   reopenComposerIfPicking(pane, file);
@@ -414,11 +462,12 @@ const reopenComposerIfPicking = (pane, file) => {
 /**
  * @param {SnapshotFile} file
  * @param {Hunk} hunk
+ * @param {number} hunkIndex
  * @param {HTMLElement} pane
  * @param {HTMLElement} anchor
  * @returns {Promise<void>}
  */
-const expandAbove = async (file, hunk, pane, anchor) => {
+const expandAbove = async (file, hunk, hunkIndex, pane, anchor) => {
   const from = Math.max(1, hunk.newStart - 8);
   const res = await api(`/context?file=${encodeURIComponent(file.path)}&from=${from}&to=${hunk.newStart - 1}`);
   if (!res.ok) return;
@@ -426,7 +475,7 @@ const expandAbove = async (file, hunk, pane, anchor) => {
   const { lines, from: start } = await res.json();
   const rows = lines.map((/** @type {string} */ text, /** @type {number} */ i) => renderRow(file, {
     kind: /** @type {'context'} */ ('context'), text, oldLine: null, newLine: start + i,
-  }));
+  }, hunkIndex));
   anchor.replaceWith(...rows);
 };
 

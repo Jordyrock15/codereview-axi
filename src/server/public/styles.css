@@ -105,6 +105,8 @@ main { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); mi
 .thread.stale { border-color: var(--del); }
 .thread .who { color: var(--mid); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
 .thread .was { color: var(--mid); white-space: pre-wrap; }
+.thread .warn { color: var(--del); font-size: 12px; margin-top: 6px; }
+.thread .warn:empty { display: none; }
 
 .thread textarea {
   width: 100%;

@@ -71,6 +71,27 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
     return path;
   };
 
+  /**
+   * A quote must carry exactly the lines its range claims, or re-anchoring will
+   * never find it again. Content is not compared: expanded-context lines
+   * legitimately sit outside the snapshot.
+   * @param {any} body
+   * @returns {void}
+   */
+  const requireQuoteShape = (body) => {
+    if ((body?.scope ?? 'line') !== 'line') return;
+
+    const start = Number(body?.startLine);
+    const end = Number(body?.endLine ?? body?.startLine);
+    if (!Number.isInteger(start) || !Number.isInteger(end)) throw new StateError(400, 'startLine and endLine must be integers');
+
+    const expected = end - start + 1;
+    const supplied = String(body?.quote ?? '') === '' ? 0 : String(body.quote).split('\n').length;
+    if (supplied !== expected) {
+      throw new StateError(400, `quote has ${supplied} line(s) but the range covers ${expected}`);
+    }
+  };
+
   /** @type {Map<string, Set<() => void>>} */
   const waiters = new Map();
 
@@ -183,6 +204,7 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
         const session = requireOpen(await guarded(ctx));
         // A traversing path here would be read back later by the pending poll.
         if ((ctx.body?.scope ?? 'line') !== 'session') requireDiffFile(session, ctx.body?.file);
+        requireQuoteShape(ctx.body ?? {});
 
         const comment = await mutateState((state) => (
           addComment(state.sessions[ctx.params.key], ctx.body ?? {}, now())
@@ -196,9 +218,19 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
       pattern: '/api/sessions/:key/comments/:id',
       handler: async (ctx) => {
         requireOpen(await guarded(ctx));
-        const comment = await mutateState((state) => (
-          patchComment(state.sessions[ctx.params.key], Number(ctx.params.id), ctx.body ?? {}, now())
-        ));
+        const comment = await mutateState((state) => {
+          const session = state.sessions[ctx.params.key];
+          // The patch body carries no range of its own, so a quote edit is only
+          // checkable against the comment already stored: read it, then validate.
+          if (ctx.body?.quote !== undefined) {
+            const existing = session.comments.find((c) => c.id === Number(ctx.params.id));
+            if (!existing) throw new StateError(404, `no comment with id ${ctx.params.id}`);
+            requireQuoteShape({
+              scope: existing.scope, startLine: existing.startLine, endLine: existing.endLine, quote: ctx.body.quote,
+            });
+          }
+          return patchComment(session, Number(ctx.params.id), ctx.body ?? {}, now());
+        });
         hub.publish(ctx.params.key, 'comment', comment);
         return { body: comment };
       },
