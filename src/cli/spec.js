@@ -44,6 +44,10 @@ export const VERBS = {
   },
   refresh: { summary: 'recompute the diff and push it to the tab', flags: [] },
   close: { summary: 'end the session', flags: [] },
+  setup: {
+    summary: 'install a Claude Code hook so every session starts knowing about a review',
+    flags: [{ name: 'global', arg: null, help: 'install into ~/.claude/settings.json instead of this repository' }],
+  },
 };
 
 /**

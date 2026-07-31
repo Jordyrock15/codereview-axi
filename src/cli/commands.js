@@ -1,3 +1,5 @@
+import os from 'node:os';
+import path from 'node:path';
 import { parseArgs } from './args.js';
 import { ensureServer, request, CliError } from './client.js';
 import { openUrl } from './browser.js';
@@ -11,6 +13,7 @@ import {
 } from './spec.js';
 import { encode } from './toon.js';
 import { presentComment, selectFields, nextSteps } from './present.js';
+import { installHook } from './setup.js';
 
 export { USAGE } from './spec.js';
 
@@ -225,6 +228,25 @@ const HANDLERS = {
       counts: commentCounts(session.comments),
     };
   },
+
+  // Deliberately no `port` in scope: this touches Claude Code's own settings,
+  // nothing to do with the review server, so it must never start one.
+  setup: async ({ flags, cwd }) => {
+    let settingsPath;
+    if (flags.global === true) {
+      settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
+    } else {
+      const root = await toplevel(cwd);
+      if (root === null) throw new CliError(1, `${cwd} is not inside a git worktree`, 'state');
+      settingsPath = path.join(root, '.claude', 'settings.local.json');
+    }
+
+    try {
+      return await installHook(settingsPath, 'cr');
+    } catch (/** @type {any} */ err) {
+      throw new CliError(1, err.message, 'state');
+    }
+  },
 };
 
 /**
@@ -327,7 +349,9 @@ export const run = async ({ argv, cwd, resolvePr = defaultResolvePr }) => {
   }
 
   try {
-    const port = await ensureServer();
+    // setup touches Claude Code's own settings, not the review server, so it
+    // must not start a daemon as a side effect of installing a hook.
+    const port = verb === 'setup' ? -1 : await ensureServer();
     const result = await handler({
       flags, cwd, port, resolvePr,
     });
