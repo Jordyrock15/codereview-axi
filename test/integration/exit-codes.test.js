@@ -17,7 +17,8 @@ const BIN = new URL('../../bin/cr.js', import.meta.url).pathname;
  */
 const runIn = async (cwd, args, env) => {
   try {
-    const { stdout } = await exec(process.execPath, [BIN, ...args, '--no-browser'], { cwd, env });
+    const withFlags = args[0] === 'open' ? [...args, '--no-browser'] : args;
+    const { stdout } = await exec(process.execPath, [BIN, ...withFlags], { cwd, env });
     return { code: 0, out: stdout };
   } catch (err) {
     const failure = /** @type {import('node:child_process').ExecFileException & {stdout?: string, stderr?: string}} */ (err);

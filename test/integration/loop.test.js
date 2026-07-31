@@ -44,7 +44,8 @@ const setup = async (t) => {
   /** @param {string[]} args */
   const cr = async (args) => {
     try {
-      const { stdout } = await exec(process.execPath, [BIN, ...args, '--no-browser'], { cwd: repo.dir, env });
+      const withFlags = args[0] === 'open' ? [...args, '--no-browser'] : args;
+      const { stdout } = await exec(process.execPath, [BIN, ...withFlags], { cwd: repo.dir, env });
       return { code: 0, out: stdout };
     } catch (err) {
       const failure = /** @type {import('node:child_process').ExecFileException & {stdout?: string, stderr?: string}} */ (err);

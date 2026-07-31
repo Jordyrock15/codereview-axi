@@ -34,12 +34,14 @@ cr close
 ```
 usage: cr <verb> [flags]
 
-  open     [--note TEXT] [--base REF | --pr N] [--no-browser]  start or resume a review, against a base ref or a pull request (--pr needs gh on PATH)
-  wait     [--timeout 300] [--say TEXT]                        block until the human sends comments
-  list     [--status open]                                     print comments without blocking
-  reply    --id N --status S --body TEXT                       answer one comment (fixed|explained|skipped)
-  refresh                                                       recompute the diff and push it to the tab
-  close                                                         end the session
+  open      start or resume a review, against a base ref or a pull request
+  wait      block until the human sends comments
+  list      print comments without blocking
+  reply     answer one comment
+  refresh   recompute the diff and push it to the tab
+  close     end the session
+
+run `cr <verb> --help` for a verb's flags
 ```
 
 By default `open` reviews the working diff (`git diff HEAD`). `--base <ref>` reviews the current branch against `git diff $(git merge-base <ref> HEAD)` instead, so independent work on the base branch since it diverged stays out of the diff. `--pr <number>` resolves a pull request's base and head branch through `gh` and reviews it the same way as `--base <baseRefName>` would, but only if the current branch is already the PR's head: if it is not, `cr` refuses and prints the `git fetch`/`git checkout` command to run rather than checking out the branch itself. `--pr` and `--base` cannot be combined. `refresh` recomputes against whichever surface the session was opened with, and reopening a session with a different base or PR is refused rather than silently swapped.

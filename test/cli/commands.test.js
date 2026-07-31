@@ -4,7 +4,7 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { makeRepo } from '../helpers/repo.js';
-import { USAGE } from '../../src/cli/commands.js';
+import { USAGE, run } from '../../src/cli/commands.js';
 
 /** @param {import('node:test').TestContext} t */
 const setup = async (t) => {
@@ -29,7 +29,7 @@ const setup = async (t) => {
   await repo.write('a.js', 'one\nTWO\nthree\n');
 
   /** @param {string[]} argv */
-  const cr = (argv) => run({ argv: [...argv, '--no-browser'], cwd: repo.dir, env: process.env });
+  const cr = (argv) => run({ argv: argv[0] === 'open' ? [...argv, '--no-browser'] : argv, cwd: repo.dir, env: process.env });
   return { cr, repo, run };
 };
 
@@ -388,4 +388,24 @@ test("the README's usage block matches USAGE exactly, not by eye", async () => {
   const verbsOnly = USAGE.split('\n').slice(0, -2).join('\n');
 
   assert.equal(readmeBlock, verbsOnly);
+});
+
+test('an unrecognised flag is refused rather than silently ignored', async () => {
+  const result = await run({ argv: ['open', '--nonsense-flag', '--no-browser'], cwd: process.cwd() });
+  assert.equal(result.code, 2);
+  assert.match(result.out, /unknown flag --nonsense-flag/);
+});
+
+test('an unrecognised flag does not open a session', async () => {
+  // The failure this prevents: exit 0 and a session against the wrong surface.
+  const result = await run({ argv: ['open', '--bse', 'main', '--no-browser'], cwd: process.cwd() });
+  assert.equal(result.code, 2);
+  assert.equal(/"key"/.test(result.out), false, 'no session metadata may be printed');
+});
+
+test('--help on a verb describes only that verb', async () => {
+  const result = await run({ argv: ['reply', '--help'], cwd: process.cwd() });
+  assert.equal(result.code, 0);
+  assert.match(result.out, /usage: cr reply/);
+  assert.equal(/--no-browser/.test(result.out), false);
 });

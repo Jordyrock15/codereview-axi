@@ -6,19 +6,9 @@ import { toplevel, currentBranch } from '../diff/git.js';
 import { loadState } from '../state/store.js';
 import { sessionKey } from '../state/sessions.js';
 import { shQuote } from '../shell.js';
+import { USAGE, verbHelp, unknownFlags } from './spec.js';
 
-export const USAGE = [
-  'usage: cr <verb> [flags]',
-  '',
-  '  open     [--note TEXT] [--base REF | --pr N] [--no-browser]  start or resume a review, against a base ref or a pull request (--pr needs gh on PATH)',
-  '  wait     [--timeout 300] [--say TEXT]                        block until the human sends comments',
-  '  list     [--status open]                                     print comments without blocking',
-  '  reply    --id N --status S --body TEXT                       answer one comment (fixed|explained|skipped)',
-  '  refresh                                                       recompute the diff and push it to the tab',
-  '  close                                                         end the session',
-  '',
-  'exit codes: 0 ok, 1 usage or state, 2 nothing to review, 3 server unreachable',
-].join('\n');
+export { USAGE } from './spec.js';
 
 /**
  * @param {string} cwd
@@ -171,10 +161,18 @@ const HANDLERS = {
 export const run = async ({ argv, cwd, resolvePr = defaultResolvePr }) => {
   const { verb, flags } = parseArgs(argv);
 
-  if (verb === 'help' || flags.help === true) return { code: 0, out: USAGE };
+  if (verb === 'help') return { code: 0, out: USAGE };
 
   const handler = HANDLERS[verb];
   if (!handler) return { code: 1, out: `unknown verb "${verb}"\n\n${USAGE}` };
+
+  if (flags.help === true) return { code: 0, out: verbHelp(verb) };
+
+  const unknown = unknownFlags(verb, flags);
+  if (unknown.length > 0) {
+    const named = unknown.map((f) => `--${f}`).join(', ');
+    return { code: 2, out: `unknown ${unknown.length === 1 ? 'flag' : 'flags'} ${named}\n\n${verbHelp(verb)}` };
+  }
 
   try {
     const port = await ensureServer();
