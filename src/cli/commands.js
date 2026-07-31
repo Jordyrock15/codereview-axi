@@ -161,20 +161,22 @@ const HANDLERS = {
 
     const path = `/api/sessions/${key}/pending?holder=${process.pid}&timeout=${timeout}`;
     const fields = fieldsFrom(flags);
+    const limit = flags.full === true ? Infinity : undefined;
     const pending = unwrap(await request(port, 'GET', path, undefined, token));
-    return { ...pending, comments: pending.comments.map((/** @type {any} */ c) => presentComment(c, fields)) };
+    return { ...pending, comments: pending.comments.map((/** @type {any} */ c) => presentComment(c, fields, { limit })) };
   },
 
   list: async ({ flags, cwd, port }) => {
     const { key, token } = await resolveSession(cwd);
     const fields = fieldsFrom(flags);
+    const limit = flags.full === true ? Infinity : undefined;
     const session = unwrap(await request(port, 'GET', `/api/sessions/${key}`, undefined, token));
     const wanted = typeof flags.status === 'string' ? flags.status : null;
 
     const comments = wanted === null
       ? session.comments
       : session.comments.filter((/** @type {{status: string}} */ c) => c.status === wanted);
-    return { comments: comments.map((/** @type {any} */ c) => presentComment(c, fields)) };
+    return { comments: comments.map((/** @type {any} */ c) => presentComment(c, fields, { limit })) };
   },
 
   reply: async ({ flags, cwd, port }) => {

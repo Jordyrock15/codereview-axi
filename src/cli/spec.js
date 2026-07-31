@@ -23,6 +23,7 @@ export const VERBS = {
       { name: 'timeout', arg: 'SECONDS', help: 'how long to hold the poll, default 300' },
       { name: 'say', arg: 'TEXT', help: 'tell the human something, replaces the note' },
       { name: 'fields', arg: 'LIST', help: 'comma-separated fields, or all, default id,file,lines,verdict,body,quote' },
+      { name: 'full', arg: null, help: 'do not truncate body or quote' },
     ],
   },
   list: {
@@ -30,6 +31,7 @@ export const VERBS = {
     flags: [
       { name: 'status', arg: 'STATUS', help: 'only comments with this status' },
       { name: 'fields', arg: 'LIST', help: 'comma-separated fields, or all, default id,file,lines,verdict,body,quote' },
+      { name: 'full', arg: null, help: 'do not truncate body or quote' },
     ],
   },
   reply: {

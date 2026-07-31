@@ -13,6 +13,31 @@ export const AGENT_COMMENT_FIELDS = [
   'agentReply', 'createdAt', 'updatedAt',
 ];
 
+/** The limit below is in characters (code points), not UTF-16 code units: an emoji is one character but two units. */
+export const TRUNCATE_AT = 2000;
+
+const TRUNCATED = new Set(['body', 'quote']);
+
+/**
+ * @param {string} value
+ * @param {string} field
+ * @param {number} [limit]
+ * @returns {string}
+ */
+export const truncate = (value, field, limit = TRUNCATE_AT) => {
+  const total = Array.from(value).length;
+  if (!Number.isFinite(limit) || total <= limit) return value;
+  const hint = ` (truncated, ${total} chars total, use --full to see complete ${field})`;
+  let cut = Math.max(0, limit - hint.length);
+  // A cut landing on a high surrogate would sever its low-surrogate partner,
+  // which the TOON encoder refuses to emit; step back one code unit to keep the pair whole.
+  if (cut > 0 && cut < value.length) {
+    const code = value.charCodeAt(cut - 1);
+    if (code >= 0xd800 && code <= 0xdbff) cut -= 1;
+  }
+  return `${value.slice(0, cut)}${hint}`;
+};
+
 const lines = (/** @type {any} */ c) => {
   if (c.startLine === null || c.startLine === undefined) return '';
   const range = c.endLine !== null && c.endLine !== c.startLine ? `${c.startLine}-${c.endLine}` : `${c.startLine}`;
@@ -26,9 +51,10 @@ const reply = (/** @type {any} */ c) => (
 /**
  * @param {Record<string, unknown>} comment
  * @param {string[]} fields
+ * @param {{limit?: number}} [options]
  * @returns {Record<string, string|number|boolean|null>}
  */
-export const presentComment = (comment, fields) => {
+export const presentComment = (comment, fields, { limit = TRUNCATE_AT } = {}) => {
   /** @type {Record<string, string|number|boolean|null>} */
   const out = {};
   for (const f of fields) {
@@ -38,7 +64,8 @@ export const presentComment = (comment, fields) => {
       const v = comment[f];
       // Absent becomes empty rather than missing: the tabular form needs a
       // uniform key set across every row.
-      out[f] = v === undefined || v === null ? '' : /** @type {any} */ (v);
+      if (v === undefined || v === null) out[f] = '';
+      else out[f] = TRUNCATED.has(f) && typeof v === 'string' ? truncate(v, f, limit) : /** @type {any} */ (v);
     }
   }
   return out;
