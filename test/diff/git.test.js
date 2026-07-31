@@ -12,6 +12,7 @@ import {
   readWorkingFile,
   isBinaryPath,
   currentBranch,
+  isOptionShaped,
 } from '../../src/diff/git.js';
 
 test('toplevel returns the worktree root', async (t) => {
@@ -88,6 +89,37 @@ test('mergeBase rejects a ref that does not exist', async (t) => {
   t.after(repo.cleanup);
 
   await assert.rejects(() => mergeBase(repo.dir, 'no-such-ref'), /no-such-ref/);
+});
+
+test('mergeBase closes off --help being read as a flag rather than a ref', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+
+  // Before the fix, `git merge-base --help HEAD` exits 0 and prints the
+  // manual page to stdout, which the caller would then treat as a sha.
+  await assert.rejects(() => mergeBase(repo.dir, '--help'), /not a valid ref/);
+});
+
+test('isOptionShaped refuses only option-shaped refs, so revision expressions still work', async () => {
+  assert.equal(isOptionShaped('main'), false);
+  assert.equal(isOptionShaped('release/2.0'), false);
+  assert.equal(isOptionShaped('origin/main'), false);
+  // Revisions, not ref names, and all legitimate bases.
+  assert.equal(isOptionShaped('HEAD~3'), false);
+  assert.equal(isOptionShaped('HEAD^'), false);
+  assert.equal(isOptionShaped('@{-1}'), false);
+  assert.equal(isOptionShaped('--help'), true);
+  assert.equal(isOptionShaped('-x'), true);
+});
+
+test('mergeBase accepts a revision expression as the base', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  const first = (await repo.run(['rev-parse', 'HEAD'])).trim();
+  await repo.write('a.js', 'two\n');
+  await repo.run(['commit', '-qam', 'second']);
+
+  assert.equal(await mergeBase(repo.dir, 'HEAD~1'), first);
 });
 
 test('mergeBase rejects unrelated histories', async (t) => {

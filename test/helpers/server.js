@@ -7,7 +7,7 @@ import path from 'node:path';
 /**
  * Boots the app on an ephemeral port with an isolated state home.
  * @param {import('node:test').TestContext} t
- * @param {{now?: () => number}} [options]
+ * @param {{now?: () => number, buildSnapshot?: (repo: string, base?: string) => Promise<import('../../src/types.js').Snapshot>}} [options]
  */
 export const startApp = async (t, options = {}) => {
   const home = await mkdtemp(path.join(tmpdir(), 'cr-home-'));
@@ -22,7 +22,11 @@ export const startApp = async (t, options = {}) => {
   const { port } = /** @type {import('node:net').AddressInfo} */ (probe.address());
   await new Promise((resolve) => probe.close(resolve));
 
-  const app = createApp({ port, now: options.now ?? (() => Date.now()) });
+  const app = createApp({
+    port,
+    now: options.now ?? (() => Date.now()),
+    ...(options.buildSnapshot ? { buildSnapshot: options.buildSnapshot } : {}),
+  });
   const server = http.createServer(app.handler);
   server.listen(port, '127.0.0.1');
   await once(server, 'listening');

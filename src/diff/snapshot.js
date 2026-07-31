@@ -70,6 +70,7 @@ export const buildSnapshot = async (repo, base) => {
   const files = parseUnifiedDiff(working).map((file) => ({
     ...file,
     tags: [
+      ...(file.tags ?? []),
       ...(file.binary ? ['binary'] : []),
       ...(isGenerated(file.path) ? ['generated'] : []),
       ...(file.added + file.removed > LARGE_FILE_LINES ? ['large'] : []),

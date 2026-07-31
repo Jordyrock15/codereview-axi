@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { makeRepo } from '../helpers/repo.js';
+import { USAGE } from '../../src/cli/commands.js';
 
 /** @param {import('node:test').TestContext} t */
 const setup = async (t) => {
@@ -373,4 +374,18 @@ test('an unknown verb exits 1 with usage', async (t) => {
 test('help exits 0', async (t) => {
   const { cr } = await setup(t);
   assert.equal((await cr(['help'])).code, 0);
+});
+
+test("the README's usage block matches USAGE exactly, not by eye", async () => {
+  const readme = await readFile(new URL('../../README.md', import.meta.url), 'utf8');
+  const fence = readme.match(/```\nusage: cr <verb> \[flags\]\n([\s\S]*?)```/);
+  assert.ok(fence, "README must have a fenced 'usage: cr <verb> [flags]' block");
+
+  const readmeBlock = `usage: cr <verb> [flags]\n${fence[1]}`.replace(/\n$/, '');
+  // The exit-codes line lives in the README's own "## Exit codes" table
+  // instead, so the fenced block is USAGE minus its trailing blank line and
+  // that one line.
+  const verbsOnly = USAGE.split('\n').slice(0, -2).join('\n');
+
+  assert.equal(readmeBlock, verbsOnly);
 });

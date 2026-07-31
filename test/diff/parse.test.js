@@ -132,7 +132,79 @@ test('decodes a quoted rename with an accented new name', () => {
   assert.equal(file.path, 'café.js');
 });
 
-test('drops a file whose quoted header cannot be decoded, rather than giving it an empty path', () => {
+// core.quotePath=false (see src/diff/git.js) only stops git quoting a name
+// for non-ASCII bytes alone; a name that needs quoting for some other reason
+// (a literal quote, backslash, control character) still gets quoted and
+// C-escaped, but with non-ASCII bytes now passed through *raw* rather than
+// themselves being octal-escaped. dequote() must reconstruct the exact bytes
+// git emitted in every one of these shapes, independently encoded here so
+// the test does not share a bug with the code it is checking.
+/**
+ * @param {string} name The real, decoded filename.
+ * @returns {string} The escaped body git would print for it under
+ * core.quotePath=false, without the surrounding quotes.
+ */
+const gitEscape = (name) => {
+  let out = '';
+  for (const ch of name) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (ch === '"') { out += '\\"'; continue; }
+    if (ch === '\\') { out += '\\\\'; continue; }
+    if (ch === '\n') { out += '\\n'; continue; }
+    if (ch === '\t') { out += '\\t'; continue; }
+    if (code < 0x20 || code === 0x7f) { out += `\\${code.toString(8).padStart(3, '0')}`; continue; }
+    out += ch; // raw, including non-ASCII: this is what quotePath=false changed.
+  }
+  return out;
+};
+
+/** @param {string} name @returns {string} */
+const quotedDiffHeader = (name) => `diff --git "a/${gitEscape(name)}" "b/${gitEscape(name)}"`;
+
+for (const [label, name] of /** @type {[string, string][]} */ ([
+  ['a literal quote', 'caf"e.js'],
+  ['a backslash', 'caf\\e.js'],
+  ['a newline', 'caf\ne.js'],
+  ['a tab', 'caf\te.js'],
+  ['an octal escape (a control byte with no named C escape)', 'caf\x01e.js'],
+  ['non-ASCII together with a quote-forcing character', 'café"q.js'],
+])) {
+  test(`dequote decodes a name with ${label}`, () => {
+    const header = quotedDiffHeader(name);
+    const diff = [header, 'index 0000000..1111111 100644', '@@ -0,0 +1 @@', '+hello', ''].join('\n');
+    const [file] = parseUnifiedDiff(diff);
+    assert.equal(file.path, name);
+  });
+}
+
+// Real git output never quotes a name for non-ASCII bytes alone once
+// quotePath=false is set; this is the ordinary, unquoted path, not dequote.
+test('a plain non-ASCII name (no forcing character) decodes via the unquoted path', () => {
+  const diff = [
+    'diff --git a/café.js b/café.js',
+    'index 0000000..1111111 100644',
+    '@@ -0,0 +1 @@',
+    '+hello',
+    '',
+  ].join('\n');
+  const [file] = parseUnifiedDiff(diff);
+  assert.equal(file.path, 'café.js');
+});
+
+test('a header of exactly "a/" "b/" never produces an empty path', () => {
+  const diff = [
+    'diff --git "a/" "b/"',
+    'index 0000000..1111111 100644',
+    '@@ -0,0 +1 @@',
+    '+hello',
+    '',
+  ].join('\n');
+  const [file] = parseUnifiedDiff(diff);
+  assert.notEqual(file.path, '');
+  assert.deepEqual(file.tags, ['unparsable']);
+});
+
+test('a file whose quoted header cannot be decoded surfaces as a tagged entry, not an empty path', () => {
   const diff = [
     'diff --git "a/bad\\zzz.js" "b/bad\\zzz.js"',
     'index 0000000..1111111 100644',
@@ -143,5 +215,8 @@ test('drops a file whose quoted header cannot be decoded, rather than giving it 
     '',
   ].join('\n');
 
-  assert.deepEqual(parseUnifiedDiff(diff), []);
+  const [file] = parseUnifiedDiff(diff);
+  assert.equal(file.path === '', false, 'must never hand back an empty path');
+  assert.deepEqual(file.tags, ['unparsable']);
+  assert.deepEqual(file.hunks, []);
 });

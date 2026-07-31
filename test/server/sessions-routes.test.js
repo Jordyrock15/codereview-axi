@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { makeRepo } from '../helpers/repo.js';
 import { startApp } from '../helpers/server.js';
+import { buildSnapshot as realBuildSnapshot } from '../../src/diff/snapshot.js';
 
 test('POST /api/sessions creates a session and returns file metadata but no hunks', async (t) => {
   const repo = await makeRepo({ 'a.js': 'one\n' });
@@ -65,6 +66,35 @@ test('POST /api/sessions with a base that does not exist gives a legible 400, no
   assert.match(res.json.error, /fetch/i, 'a missing ref is the ordinary --pr failure: hint at fetching the base branch');
 });
 
+test('a missing base ref carrying shell metacharacters is quoted in the fetch hint, not interpolated raw', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+
+  // Syntactically a valid ref (git ref names may contain ; | & `), so this
+  // reaches the "could not resolve" branch rather than being refused
+  // upfront; under --pr this base comes straight from gh, i.e. from whoever
+  // opened the PR. The hint must still be safe to paste.
+  const hostile = 'feat;curl-evil|sh';
+  const res = await (await startApp(t)).call('POST', '/api/sessions', { repo: repo.dir, note: '', base: hostile });
+
+  assert.equal(res.status, 400);
+  assert.match(res.json.error, /fetch/i);
+  assert.ok(
+    res.json.error.includes(`git fetch origin '${hostile}'`),
+    `expected the hint to single-quote the hostile ref, got: ${res.json.error}`,
+  );
+});
+
+test('a base ref shaped like a flag is refused before it ever reaches git merge-base', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+
+  const res = await (await startApp(t)).call('POST', '/api/sessions', { repo: repo.dir, note: '', base: '--help' });
+
+  assert.equal(res.status, 400);
+  assert.match(res.json.error, /not a valid ref/);
+});
+
 test('POST /api/sessions with an unrelated-history base gives its own 400, distinct from a missing ref', async (t) => {
   const repo = await makeRepo({ 'a.js': 'one\n' });
   t.after(repo.cleanup);
@@ -85,6 +115,32 @@ test('a base session with no divergence says the branch has no changes, not that
   const repo = await makeRepo({ 'a.js': 'one\n' });
   t.after(repo.cleanup);
   await repo.run(['checkout', '-q', '-b', 'feature']);
+
+  const { call } = await startApp(t);
+  const res = await call('POST', '/api/sessions', { repo: repo.dir, note: '', base: 'main' });
+
+  assert.equal(res.status, 422);
+  assert.match(res.json.error, /has no changes against main/);
+  assert.doesNotMatch(res.json.error, /working tree is clean/);
+});
+
+test('a base session says the branch has no changes even while git status is genuinely dirty', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.run(['checkout', '-q', '-b', 'feature']);
+  await repo.write('a.js', 'two\n');
+  await repo.run(['add', '-A']);
+  await repo.run(['commit', '-qm', 'feature change']);
+  // Revert in the worktree only: HEAD still carries the committed change, so
+  // `git status` reports ` M a.js`, but the working tree now matches main
+  // again, so the diff against the merge-base is empty. The earlier fix's
+  // own test only covered zero divergence, where both the old and new
+  // wording happen to be true; this is the case the finding was actually
+  // about.
+  await repo.write('a.js', 'one\n');
+
+  const status = await repo.run(['status', '--porcelain']);
+  assert.match(status, /^ M a\.js/m, 'the setup must produce a genuinely dirty working tree');
 
   const { call } = await startApp(t);
   const res = await call('POST', '/api/sessions', { repo: repo.dir, note: '', base: 'main' });
@@ -571,4 +627,58 @@ test('a slow session create does not hold up an unrelated route behind the state
   assert.equal(slowRes.status, 201);
   assert.equal(closeRes.status, 200);
   assert.deepEqual(order, ['quick-close', 'slow-create'], 'closing a different session must not wait behind a slow snapshot build');
+});
+
+test('a conflicting session wins over an empty-diff 422, deterministically rather than by timing', async (t) => {
+  // Reproduces the interleaving the re-review found by chance at a 0-25ms
+  // stagger: a working-diff open and a base:'main' open race for the same
+  // repo, and the base one happens to have nothing to review. The commit
+  // that revert-in-the-worktree gives us the same split as the motivating
+  // case above: `git diff HEAD` (no base) is non-empty, `git diff
+  // $(merge-base main HEAD)` is empty, and a plain diff-then-decide race
+  // would let the empty one answer 422 first. buildSnapshot is injected so
+  // the base request's own snapshot only resolves once the working-diff
+  // request has already committed its session, which is a controllable
+  // seam rather than a timing coincidence: whichever real-clock stagger
+  // this runs under, the base request cannot get past its own buildSnapshot
+  // until the ordering below says so.
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.run(['checkout', '-q', '-b', 'feature']);
+  await repo.write('a.js', 'two\n');
+  await repo.run(['add', '-A']);
+  await repo.run(['commit', '-qm', 'feature change']);
+  await repo.write('a.js', 'one\n');
+
+  /** @type {(value?: void) => void} */
+  let releaseBaseBuild = () => {};
+  const gate = new Promise((resolve) => { releaseBaseBuild = resolve; });
+
+  /** @type {string[]} */
+  const order = [];
+  const buildSnapshot = async (/** @type {string} */ dir, /** @type {string|undefined} */ base) => {
+    const built = await realBuildSnapshot(dir, base);
+    if (base === 'main') { await gate; order.push('base-snapshot-released'); }
+    return built;
+  };
+
+  const { call } = await startApp(t, { buildSnapshot });
+
+  const basePromise = call('POST', '/api/sessions', { repo: repo.dir, note: 'n', base: 'main' });
+  // A tick's head start biases the base request past its own fast conflict
+  // pre-check (which runs before buildSnapshot and sees no session yet)
+  // before the working-diff request below even starts; the gate above is
+  // what actually guarantees the ordering that matters, not this.
+  await new Promise((resolve) => { setImmediate(resolve); });
+
+  const workingRes = await call('POST', '/api/sessions', { repo: repo.dir, note: 'n' });
+  assert.equal(workingRes.status, 201, 'the working-diff session must actually open');
+  order.push('working-diff-committed');
+
+  releaseBaseBuild();
+  const baseRes = await basePromise;
+
+  assert.deepEqual(order, ['working-diff-committed', 'base-snapshot-released']);
+  assert.equal(baseRes.status, 409, 'a conflicting session must win over an empty-diff 422');
+  assert.match(baseRes.json.error, /base/);
 });

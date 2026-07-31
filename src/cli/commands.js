@@ -5,8 +5,9 @@ import { resolvePr as defaultResolvePr, parsePrNumber } from './pr.js';
 import { toplevel, currentBranch } from '../diff/git.js';
 import { loadState } from '../state/store.js';
 import { sessionKey } from '../state/sessions.js';
+import { shQuote } from '../shell.js';
 
-const USAGE = [
+export const USAGE = [
   'usage: cr <verb> [flags]',
   '',
   '  open     [--note TEXT] [--base REF | --pr N] [--no-browser]  start or resume a review, against a base ref or a pull request (--pr needs gh on PATH)',
@@ -48,17 +49,6 @@ const unwrap = (res) => {
 /**
  * @typedef {(number: number|string, options?: {run?: (args: string[], cwd?: string) => Promise<string>, cwd?: string}) => Promise<{base: string, head: string}>} ResolvePr
  */
-
-/**
- * POSIX single-quoting: wrap in single quotes, and for each embedded single
- * quote, close the string, insert an escaped one, then reopen it. This is
- * what makes the branch-mismatch suggestion below safe to paste even when
- * the PR head branch (untrusted: it comes from whoever opened the PR) is
- * built to look like a shell command.
- * @param {string} s
- * @returns {string}
- */
-export const shQuote = (s) => `'${s.replace(/'/g, "'\\''")}'`;
 
 /** @type {Record<string, (input: {flags: Record<string, string|boolean>, cwd: string, port: number, resolvePr: ResolvePr}) => Promise<unknown>>} */
 const HANDLERS = {

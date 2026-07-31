@@ -23,7 +23,14 @@ const dequote = (quoted) => {
   const bytes = [];
   for (let i = 0; i < inner.length; i += 1) {
     const ch = inner[i];
-    if (ch !== '\\') { bytes.push(ch.charCodeAt(0)); continue; }
+    if (ch !== '\\') {
+      // core.quotePath=false lets non-ASCII bytes through raw even on a name
+      // git still had to quote for some other character; charCodeAt(0) is
+      // only correct for single-byte ASCII, so re-encode anything above it
+      // back to the UTF-8 bytes git actually emitted.
+      bytes.push(...Buffer.from(ch, 'utf8'));
+      continue;
+    }
     i += 1;
     const esc = inner[i];
     if (esc === undefined) return null;
@@ -83,7 +90,13 @@ const parseGitPaths = (raw) => {
   const second = readPathToken(first.rest.replace(/^ /, ''));
   if (second === null || !second.value.startsWith('b/')) return null;
 
-  return { a: first.value.slice(2), b: second.value.slice(2) };
+  const a = first.value.slice(2);
+  const b = second.value.slice(2);
+  // A header of exactly "a/" "b/" would otherwise decode to an empty path,
+  // the one shape a comment must never anchor to.
+  if (a === '' || b === '') return null;
+
+  return { a, b };
 };
 
 /**
@@ -111,7 +124,20 @@ export const parseUnifiedDiff = (text) => {
         // bytes (a literal quote, backslash or newline) but that this parser
         // cannot decode: better to drop the entry than hand back an empty
         // path, which would render as a blank row and collide with any other.
+        // The daemon's stdio is discarded, so this console.error alone would
+        // vanish; a synthetic, tagged entry is what actually reaches a human
+        // or agent looking at the file list.
         console.error(`cr: could not parse a file path from "${line}", skipping it`);
+        files.push({
+          path: `(unparsable path, raw header: ${line})`,
+          oldPath: null,
+          status: 'modified',
+          binary: false,
+          added: 0,
+          removed: 0,
+          hunks: [],
+          tags: ['unparsable'],
+        });
         file = null;
         hunk = null;
         continue;
@@ -124,6 +150,7 @@ export const parseUnifiedDiff = (text) => {
         added: 0,
         removed: 0,
         hunks: [],
+        tags: [],
       };
       files.push(file);
       hunk = null;

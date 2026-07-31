@@ -54,7 +54,7 @@ const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
 /**
  * @param {string} message
- * @param {'missing-ref'|'unrelated-history'} reason
+ * @param {'missing-ref'|'unrelated-history'|'invalid-ref'} reason
  * @returns {Error}
  */
 const baseFailure = (message, reason) => {
@@ -66,6 +66,21 @@ const baseFailure = (message, reason) => {
 };
 
 /**
+ * Conservative syntax check for a ref that did not originate with the local,
+ * trusted user, principally a PR's base branch as reported by `gh`. This does
+ * not stop a ref built to look like a shell command (git ref names may
+ * contain `;`, `|`, `` ` ``: only quoting at the point of display does that);
+ * what it does stop is a ref shaped like an option, for example `--help`,
+ * which would otherwise be read by git itself as a flag rather than a name.
+ * A revision expression such as `HEAD~3` is deliberately allowed: it is a
+ * legitimate base, and `merge-base` reports its own error for anything that
+ * does not resolve.
+ * @param {string} ref
+ * @returns {boolean}
+ */
+export const isOptionShaped = (ref) => ref.startsWith('-');
+
+/**
  * Where the branch diverged from its base. That, not the base tip, is the
  * review surface: diffing the tip would show independent work on the base
  * branch reversed.
@@ -74,9 +89,15 @@ const baseFailure = (message, reason) => {
  * @returns {Promise<string>}
  */
 export const mergeBase = async (repo, base) => {
+  if (isOptionShaped(base)) {
+    throw baseFailure(`${base} is not a valid ref name`, 'invalid-ref');
+  }
+
   let out;
   try {
-    out = await git(repo, ['merge-base', base, 'HEAD']);
+    // `--` closes option parsing, so a ref shaped like a flag (`--help`)
+    // cannot be read as one even if `isValidRef` above were ever bypassed.
+    out = await git(repo, ['merge-base', '--', base, 'HEAD']);
   } catch (/** @type {any} */ err) {
     // git exits 128 for a bad revision or ref; anything else (unrelated
     // histories exit 1) is the other case. Either way, keep git's own detail.

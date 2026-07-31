@@ -1,5 +1,5 @@
 import { toplevel } from '../diff/git.js';
-import { buildSnapshot } from '../diff/snapshot.js';
+import { buildSnapshot as defaultBuildSnapshot } from '../diff/snapshot.js';
 import { mutateState, loadState } from '../state/store.js';
 import {
   openOrReuse, closeSession, reapSessions, sessionKey, assertNoBaseConflict,
@@ -13,6 +13,7 @@ import { addComment, patchComment, markSent, applyReply, unsentCount } from '../
 import { takeLease, releaseLease } from './lease.js';
 import { commentContext, expandContext } from '../diff/context.js';
 import { shellHtml, assetResponse } from './ui.js';
+import { shQuote } from '../shell.js';
 
 /**
  * @typedef {import('../types.js').Session} Session
@@ -23,6 +24,11 @@ import { shellHtml, assetResponse } from './ui.js';
  * `mergeBase` (via `buildSnapshot`) discriminates a missing ref from unrelated
  * histories and tags each with a `crReason`; without this the route mapped
  * both, along with everything else, to a bare 500 internal error.
+ *
+ * `base` reaches this message unsanitised: for a `--pr` session it is a PR's
+ * base branch name, read via `gh`, and so no more trustworthy than the diff
+ * itself. `shQuote` is what keeps the suggested `git fetch` pasteable rather
+ * than executable.
  * @param {unknown} err
  * @param {string|undefined} base
  * @returns {unknown} A `StateError` when the failure is base-related, the original error otherwise.
@@ -31,9 +37,9 @@ const translateBaseFailure = (err, base) => {
   if (base === undefined || !(err instanceof Error)) return err;
   const reason = /** @type {any} */ (err).crReason;
   if (reason === 'missing-ref') {
-    return new StateError(400, `${err.message}. For a pull request this usually means the base branch has not been fetched, try git fetch origin ${base}.`);
+    return new StateError(400, `${err.message}. For a pull request this usually means the base branch has not been fetched, try git fetch origin ${shQuote(base)}.`);
   }
-  if (reason === 'unrelated-history') return new StateError(400, err.message);
+  if (reason === 'unrelated-history' || reason === 'invalid-ref') return new StateError(400, err.message);
   return err;
 };
 
@@ -49,9 +55,11 @@ const fileMeta = ({ path, status, added, removed, tags, binary }) => ({ path, st
 const publicSession = ({ token, ...rest }) => rest;
 
 /**
- * @param {{port: number, now?: () => number, hub?: ReturnType<typeof createHub>}} options
+ * @param {{port: number, now?: () => number, hub?: ReturnType<typeof createHub>, buildSnapshot?: typeof defaultBuildSnapshot}} options
  */
-export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) => {
+export const createApp = ({
+  port, now = () => Date.now(), hub = createHub(), buildSnapshot = defaultBuildSnapshot,
+}) => {
   /**
    * Loads a session and applies the full guard. Throws on any failure.
    * @param {any} ctx
@@ -174,17 +182,23 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
         } catch (err) {
           throw translateBaseFailure(err, base);
         }
-        if (built.files.length === 0) {
-          throw new StateError(422, base !== undefined
-            ? `nothing to review, the branch has no changes against ${base}`
-            : 'nothing to review, the working tree is clean');
-        }
 
         // Building the snapshot is real git work (a diff, a merge-base, every
         // untracked file read); running it inside mutateState would serialise
-        // it behind every other route, including the long poll's drain.
+        // it behind every other route, including the long poll's drain. But
+        // the conflict must be decided last, inside the mutex: a session that
+        // opened while this snapshot was building still wins over an
+        // empty-diff 422, which the fast pre-check above cannot guarantee on
+        // its own since it runs before this await, not after it.
         const { session, reused, snapshot } = await mutateState((state) => {
           reapSessions(state, at);
+          assertNoBaseConflict(state.sessions[key], base, pr);
+
+          if (built.files.length === 0) {
+            throw new StateError(422, base !== undefined
+              ? `nothing to review, the branch has no changes against ${base}`
+              : 'nothing to review, the working tree is clean');
+          }
 
           const result = openOrReuse(state, {
             repo: root, note: String(body?.note ?? ''), snapshot: built, port, now: at, base, pr,

@@ -34,12 +34,12 @@ cr close
 ```
 usage: cr <verb> [flags]
 
-  open     [--note TEXT] [--base REF | --pr N] [--no-browser]   start or resume a review, against a base ref or a pull request
-  wait     [--timeout 300] [--say TEXT]   block until the human sends comments
-  list     [--status open]                 print comments without blocking
-  reply    --id N --status S --body TEXT   answer one comment (fixed|explained|skipped)
-  refresh                                  recompute the diff and push it to the tab
-  close                                    end the session
+  open     [--note TEXT] [--base REF | --pr N] [--no-browser]  start or resume a review, against a base ref or a pull request (--pr needs gh on PATH)
+  wait     [--timeout 300] [--say TEXT]                        block until the human sends comments
+  list     [--status open]                                     print comments without blocking
+  reply    --id N --status S --body TEXT                       answer one comment (fixed|explained|skipped)
+  refresh                                                       recompute the diff and push it to the tab
+  close                                                         end the session
 ```
 
 By default `open` reviews the working diff (`git diff HEAD`). `--base <ref>` reviews the current branch against `git diff $(git merge-base <ref> HEAD)` instead, so independent work on the base branch since it diverged stays out of the diff. `--pr <number>` resolves a pull request's base and head branch through `gh` and reviews it the same way as `--base <baseRefName>` would, but only if the current branch is already the PR's head: if it is not, `cr` refuses and prints the `git fetch`/`git checkout` command to run rather than checking out the branch itself. `--pr` and `--base` cannot be combined. `refresh` recomputes against whichever surface the session was opened with, and reopening a session with a different base or PR is refused rather than silently swapped.
@@ -71,7 +71,7 @@ If the server dies mid-`wait`, `cr wait` exits 3 so the agent reports the failur
 - Each session gets a random per-session token, required on every API request either as an `x-cr-token` header or a `?t=` query parameter.
 - Every request is checked against the Host header and, when present, the Origin header; anything that is not `127.0.0.1` or `localhost` on the session's own port is rejected.
 - State is written to `~/.codereview-axi/state.json` with file mode `0600`.
-- `cr` never writes to the repository under review, and never checks anything out, fetches, or switches branches, even for `--pr`: if the current branch is not the PR's head, `cr` refuses and prints the command to run rather than doing it. It reads the diff and holds comments in its own state file; this is proven by an integration test that asserts the repository is byte-identical after a full session. The only external process `cr` spawns beyond `git` is `gh`, and only for `--pr`, to read PR metadata; it is never used to fetch or check out.
+- `cr` never writes to the repository under review, and never checks anything out, fetches, or switches branches, even for `--pr`: if the current branch is not the PR's head, `cr` refuses and prints the command to run rather than doing it. It reads the diff and holds comments in its own state file; this is proven by an integration test that asserts the repository is byte-identical after a full session. Beyond `git`, `cr` spawns `gh` for `--pr`, to read PR metadata, never to fetch or check out, and it spawns the platform's own browser opener (`open` on macOS, `xdg-open` elsewhere) to launch the review tab.
 - A file read confines itself to the resolved, real path staying inside the worktree, so a symlink in the diff pointing outside the repository (for example at `~/.ssh/id_rsa`) is refused rather than followed. This matters once the diff under review can come from someone else's pull request. A symlink pointing inside the repository still resolves and reads normally.
 - Anyone holding a session's token can read the full diff and comment thread for that session over loopback; that is what the token is for; there is no further access control within a session.
 

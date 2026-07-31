@@ -31,6 +31,7 @@
  * @property {number} added — Count of added lines.
  * @property {number} removed — Count of removed lines.
  * @property {Hunk[]} hunks — Empty for binary files.
+ * @property {string[]} tags — Empty except for a synthetic entry standing in for a diff header the parser could not decode, which carries 'unparsable'.
  */
 
 /**
@@ -44,7 +45,7 @@
  * @property {number} added — Count of added lines.
  * @property {number} removed — Count of removed lines.
  * @property {Hunk[]} hunks — Empty for binary files.
- * @property {string[]} tags — Any of 'untracked', 'binary', 'generated', 'large'.
+ * @property {string[]} tags — Any of 'untracked', 'binary', 'generated', 'large', 'unparsable'.
  */
 
 /**
