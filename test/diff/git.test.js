@@ -2,8 +2,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
+import { writeFile, rm, symlink } from 'node:fs/promises';
 import { makeRepo } from '../helpers/repo.js';
-import { toplevel, diffWorking, untrackedPaths, readWorkingFile } from '../../src/diff/git.js';
+import {
+  toplevel,
+  diffWorking,
+  untrackedPaths,
+  readWorkingFile,
+  isBinaryPath,
+} from '../../src/diff/git.js';
 
 test('toplevel returns the worktree root', async (t) => {
   const repo = await makeRepo({ 'a.js': 'const a = 1;\n' });
@@ -77,4 +84,50 @@ test('readWorkingFile returns contents and null for a missing file', async (t) =
   t.after(repo.cleanup);
   assert.equal(await readWorkingFile(repo.dir, 'a.js'), 'one\n');
   assert.equal(await readWorkingFile(repo.dir, 'nope.js'), null);
+});
+
+test('readWorkingFile refuses a symlink pointing outside the repo', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+
+  const outside = path.join(tmpdir(), `cr-outside-${process.pid}.txt`);
+  await writeFile(outside, 'SECRET\n');
+  t.after(() => rm(outside, { force: true }));
+  await symlink(outside, path.join(repo.dir, 'link.txt'));
+
+  assert.equal(await readWorkingFile(repo.dir, 'link.txt'), null);
+});
+
+test('isBinaryPath refuses a symlink pointing outside the repo', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+
+  const outside = path.join(tmpdir(), `cr-outside-bin-${process.pid}.bin`);
+  await writeFile(outside, Buffer.from([0x00, 0x01, 0x02]));
+  t.after(() => rm(outside, { force: true }));
+  await symlink(outside, path.join(repo.dir, 'blob.bin'));
+
+  assert.equal(await isBinaryPath(repo.dir, 'blob.bin'), false);
+});
+
+test('a symlink pointing inside the repo still reads', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await symlink(path.join(repo.dir, 'a.js'), path.join(repo.dir, 'alias.js'));
+
+  assert.equal(await readWorkingFile(repo.dir, 'alias.js'), 'one\n');
+});
+
+test('an ordinary file in a repo under a symlinked root still reads', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+
+  assert.equal(await readWorkingFile(repo.dir, 'a.js'), 'one\n');
+});
+
+test('a path escaping with .. is refused', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+
+  assert.equal(await readWorkingFile(repo.dir, '../escape.txt'), null);
 });

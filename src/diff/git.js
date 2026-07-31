@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readFile, access } from 'node:fs/promises';
+import { readFile, access, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 const exec = promisify(execFile);
@@ -64,13 +64,32 @@ export const untrackedPaths = async (repo) => {
 };
 
 /**
+ * A branch under review can contain a symlink out of the tree, and git reports
+ * it as an ordinary path, so confinement has to happen at the read.
  * @param {string} repo
  * @param {string} relPath
- * @returns {Promise<string|null>} Contents, or null when the file is gone.
+ * @returns {Promise<string|null>} The resolved path, or null when it escapes.
+ */
+const resolveInside = async (repo, relPath) => {
+  try {
+    const root = await realpath(repo);
+    const real = await realpath(path.join(root, relPath));
+    return real === root || real.startsWith(root + path.sep) ? real : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * @param {string} repo
+ * @param {string} relPath
+ * @returns {Promise<string|null>} Contents, or null when the file is gone or escapes the repo.
  */
 export const readWorkingFile = async (repo, relPath) => {
+  const real = await resolveInside(repo, relPath);
+  if (real === null) return null;
   try {
-    return await readFile(path.join(repo, relPath), 'utf8');
+    return await readFile(real, 'utf8');
   } catch {
     return null;
   }
@@ -82,8 +101,10 @@ export const readWorkingFile = async (repo, relPath) => {
  * @returns {Promise<boolean>} True when the file contains a NUL byte in its first 8KB.
  */
 export const isBinaryPath = async (repo, relPath) => {
+  const real = await resolveInside(repo, relPath);
+  if (real === null) return false;
   try {
-    const buf = await readFile(path.join(repo, relPath));
+    const buf = await readFile(real);
     return buf.subarray(0, 8192).includes(0);
   } catch {
     return false;
