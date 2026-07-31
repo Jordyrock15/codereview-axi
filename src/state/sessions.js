@@ -64,6 +64,7 @@ export const openOrReuse = (state, { repo, note, snapshot, port, now }) => {
     comments: [],
     chat: [],
     lease: null,
+    view: 'unified',
     createdAt: at,
     updatedAt: at,
   };

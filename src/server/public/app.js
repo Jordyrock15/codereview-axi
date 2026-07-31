@@ -7,6 +7,7 @@
  */
 
 import { highlight } from './highlight.js';
+import { pairLines } from './pair.js';
 
 const key = document.body.dataset.key;
 const token = new URLSearchParams(location.search).get('t') ?? '';
@@ -77,15 +78,31 @@ const clearPick = () => {
   picking.hunk = null;
   document.querySelector('.thread.composer')?.remove();
   for (const row of document.querySelectorAll('.row.picked')) row.classList.remove('picked');
+  for (const cell of document.querySelectorAll('.t.picked')) cell.classList.remove('picked');
 };
 
-/** @returns {void} */
+/**
+ * Unified marks the whole row; split marks only the cell on the picked side,
+ * so choosing a line never highlights the other column's unrelated code.
+ * @returns {void}
+ */
 const paintPick = () => {
+  for (const row of document.querySelectorAll('.row.picked')) row.classList.remove('picked');
+  for (const cell of document.querySelectorAll('.t.picked')) cell.classList.remove('picked');
+
   for (const row of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.row'))) {
+    if (row.dataset.file !== picking.file) continue;
+
     const line = Number(row.dataset[picking.side === 'new' ? 'newLine' : 'oldLine'] || 0);
     const inRange = picking.start !== null && line >= Math.min(picking.start, picking.end ?? picking.start)
       && line <= Math.max(picking.start, picking.end ?? picking.start);
-    row.classList.toggle('picked', inRange && row.dataset.file === picking.file);
+    if (!inRange) continue;
+
+    if (row.classList.contains('split')) {
+      row.querySelector(`.t[data-side="${picking.side}"]`)?.classList.add('picked');
+    } else {
+      row.classList.add('picked');
+    }
   }
 };
 
@@ -126,13 +143,14 @@ const renderFiles = () => {
 const selectionRows = (pane) => [.../** @type {NodeListOf<HTMLElement>} */ (pane.querySelectorAll('.row'))];
 
 /**
- * The unified view has one text cell per row. Split view (Task 3) reads a
- * different cell depending on which side was picked; this is the seam for it.
+ * The unified view has one text cell per row. Split view has two; read the
+ * one whose data-side matches.
  * @param {HTMLElement} row
  * @param {'old'|'new'} side
  * @returns {string}
  */
-const textOf = (row, side) => row.querySelector('.t')?.textContent ?? '';
+const textOf = (row, side) => row.querySelector(`.t[data-side="${side}"]`)?.textContent
+  ?? row.querySelector('.t')?.textContent ?? '';
 
 /**
  * The rows are what the human saw and chose. Reading the quote from them rather
@@ -344,6 +362,46 @@ const renderThreadsImpl = (pane, file) => {
 };
 
 /**
+ * Selection logic for a gutter click, shared by the unified row (one line per
+ * row) and the split row (two independent lines sharing one row).
+ * @param {SnapshotFile} file
+ * @param {HTMLElement} row
+ * @param {'old'|'new'} side
+ * @param {number|null} lineNo
+ * @returns {(event: MouseEvent) => void}
+ */
+const pickHandler = (file, row, side, lineNo) => (event) => {
+  const line = Number(lineNo);
+  if (!Number.isInteger(line) || line === 0) return;
+
+  // The side must match too: the old and new gutters are adjacent columns, so
+  // extending across them would build a quote for code the human never chose.
+  // The hunk must match as well: crossing into another hunk starts a fresh
+  // selection rather than silently splicing out the unchanged gap between them.
+  const sameHunk = row.dataset.hunk === picking.hunk;
+  const shiftExtend = event.shiftKey && picking.start !== null
+    && picking.file === file.path && side === picking.side && sameHunk;
+
+  if (shiftExtend) {
+    picking.end = line;
+  } else {
+    picking.file = file.path;
+    picking.side = side;
+    picking.start = line;
+    picking.end = line;
+    picking.hunk = row.dataset.hunk ?? null;
+  }
+  paintPick();
+
+  const existingComposer = /** @type {HTMLElement|null} */ (document.querySelector('.thread.composer'));
+  if (shiftExtend && existingComposer) {
+    updateComposerHeader(existingComposer, file);
+  } else {
+    openComposer(file, row);
+  }
+};
+
+/**
  * @param {SnapshotFile} file
  * @param {DiffLine} line0
  * @param {number} hunkIndex
@@ -362,40 +420,41 @@ const renderRow = (file, line0, hunkIndex) => {
   row.dataset.oldLine = String(line0.oldLine ?? '');
   row.dataset.hunk = String(hunkIndex);
 
-  const pick = (/** @type {'old'|'new'} */ side) => (/** @type {MouseEvent} */ event) => {
-    const line = Number(side === 'new' ? line0.newLine : line0.oldLine);
-    if (!Number.isInteger(line) || line === 0) return;
+  oldNo.addEventListener('click', pickHandler(file, row, 'old', line0.oldLine));
+  newNo.addEventListener('click', pickHandler(file, row, 'new', line0.newLine));
 
-    // The side must match too: the old and new gutters are adjacent columns, so
-    // extending across them would build a quote for code the human never chose.
-    // The hunk must match as well: crossing into another hunk starts a fresh
-    // selection rather than silently splicing out the unchanged gap between them.
-    const sameHunk = row.dataset.hunk === picking.hunk;
-    const shiftExtend = event.shiftKey && picking.start !== null
-      && picking.file === file.path && side === picking.side && sameHunk;
+  return row;
+};
 
-    if (shiftExtend) {
-      picking.end = line;
-    } else {
-      picking.file = file.path;
-      picking.side = side;
-      picking.start = line;
-      picking.end = line;
-      picking.hunk = row.dataset.hunk ?? null;
-    }
-    paintPick();
+/**
+ * @param {SnapshotFile} file
+ * @param {import('./pair.js').Pair} pair
+ * @param {number} hunkIndex
+ * @returns {HTMLElement}
+ */
+const renderSplitRow = (file, pair, hunkIndex) => {
+  const row = el('div', 'row split');
+  row.dataset.file = file.path;
+  row.dataset.hunk = String(hunkIndex);
+  row.dataset.oldLine = String(pair.old?.oldLine ?? '');
+  row.dataset.newLine = String(pair.new?.newLine ?? '');
 
-    const existingComposer = /** @type {HTMLElement|null} */ (document.querySelector('.thread.composer'));
-    if (shiftExtend && existingComposer) {
-      updateComposerHeader(existingComposer, file);
-    } else {
-      openComposer(file, row);
-    }
+  /**
+   * @param {DiffLine|null} line
+   * @param {'old'|'new'} side
+   * @returns {[HTMLElement, HTMLElement]}
+   */
+  const cell = (line, side) => {
+    const lineNo = line === null ? null : (side === 'old' ? line.oldLine : line.newLine);
+    const no = el('span', 'n', lineNo === null ? '' : String(lineNo));
+    const text = el('span', `t ${line === null ? 'blank' : line.kind}`);
+    if (line !== null) text.innerHTML = highlight(line.text);
+    text.dataset.side = side;
+    if (line !== null) no.addEventListener('click', pickHandler(file, row, side, lineNo));
+    return [no, text];
   };
 
-  oldNo.addEventListener('click', pick('old'));
-  newNo.addEventListener('click', pick('new'));
-
+  row.append(...cell(pair.old, 'old'), ...cell(pair.new, 'new'));
   return row;
 };
 
@@ -427,11 +486,18 @@ const renderDiff = () => {
     return;
   }
 
+  const split = session.view === 'split';
+
   file.hunks.forEach((hunk, hunkIndex) => {
     const expand = el('button', 'expand', `⋯ ${hunk.header || `line ${hunk.newStart}`} ⋯`);
     expand.addEventListener('click', () => expandAbove(file, hunk, hunkIndex, pane, expand));
     pane.append(expand);
-    for (const line of hunk.lines) pane.append(renderRow(file, line, hunkIndex));
+
+    if (split) {
+      for (const pair of pairLines(hunk.lines)) pane.append(renderSplitRow(file, pair, hunkIndex));
+    } else {
+      for (const line of hunk.lines) pane.append(renderRow(file, line, hunkIndex));
+    }
   });
 
   renderThreadsImpl(pane, file);
@@ -473,9 +539,16 @@ const expandAbove = async (file, hunk, hunkIndex, pane, anchor) => {
   if (!res.ok) return;
 
   const { lines, from: start } = await res.json();
-  const rows = lines.map((/** @type {string} */ text, /** @type {number} */ i) => renderRow(file, {
-    kind: /** @type {'context'} */ ('context'), text, oldLine: null, newLine: start + i,
-  }, hunkIndex));
+  /** @type {DiffLine[]} */
+  const expanded = lines.map((/** @type {string} */ text, /** @type {number} */ i) => (
+    { kind: 'context', text, oldLine: null, newLine: start + i }
+  ));
+
+  // The working tree has no old-side line mapping for expanded context, so
+  // split view shows it as new-only, same as the unified row's blank old gutter.
+  const rows = view.session?.view === 'split'
+    ? expanded.map((/** @type {DiffLine} */ line) => renderSplitRow(file, { old: null, new: line }, hunkIndex))
+    : expanded.map((/** @type {DiffLine} */ line) => renderRow(file, line, hunkIndex));
   anchor.replaceWith(...rows);
 };
 
@@ -508,7 +581,7 @@ const subscribe = () => {
 
   source.addEventListener('open', () => { badge.textContent = 'connected'; badge.dataset.state = 'up'; });
   source.addEventListener('error', () => { badge.textContent = 'disconnected'; badge.dataset.state = 'down'; });
-  for (const name of ['comment', 'sent', 'refreshed', 'closed', 'note']) {
+  for (const name of ['comment', 'sent', 'refreshed', 'closed', 'note', 'view']) {
     source.addEventListener(name, () => { void load(); });
   }
 };
@@ -527,13 +600,24 @@ const load = async () => {
   view.session = session;
   view.current ??= session.snapshot.files[0]?.path ?? null;
   $('note').textContent = session.note || 'no note';
+  // The label names what clicking will switch to, read from the session so two
+  // tabs cannot disagree, never from local state.
+  $('view').textContent = session.view === 'split' ? 'unified' : 'split';
   renderFiles();
   renderDiff();
   counts();
 };
 
+/** @returns {Promise<void>} */
+const toggleView = async () => {
+  const next = view.session?.view === 'split' ? 'unified' : 'split';
+  await api('/view', { method: 'PATCH', body: JSON.stringify({ view: next }) });
+  await load();
+};
+
 $('send').addEventListener('click', send);
 $('done').addEventListener('click', done);
+$('view').addEventListener('click', toggleView);
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape') clearPick(); });
 
 subscribe();

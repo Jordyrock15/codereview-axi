@@ -345,6 +345,25 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
       },
     },
     {
+      method: 'PATCH',
+      pattern: '/api/sessions/:key/view',
+      handler: async (ctx) => {
+        requireOpen(await guarded(ctx));
+        const view = String(ctx.body?.view ?? '');
+        if (!['unified', 'split'].includes(view)) throw new StateError(400, 'view must be unified or split');
+
+        const session = await mutateState((state) => {
+          const live = state.sessions[ctx.params.key];
+          live.view = /** @type {'unified'|'split'} */ (view);
+          live.updatedAt = new Date(now()).toISOString();
+          return live;
+        });
+
+        hub.publish(ctx.params.key, 'view', { view: session.view });
+        return { body: { view: session.view } };
+      },
+    },
+    {
       method: 'GET',
       pattern: '/session/:key',
       handler: async ({ res, params }) => {

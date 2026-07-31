@@ -292,3 +292,78 @@ test('POST refresh marks a comment stale when its quote is gone', async (t) => {
   const res = await call('POST', `/api/sessions/${key}/refresh?t=${token}`);
   assert.deepEqual(res.json.stale, [1]);
 });
+
+test('a new session defaults its view to unified', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.write('a.js', 'two\n');
+
+  const { call } = await startApp(t);
+  const { key, token } = (await call('POST', '/api/sessions', { repo: repo.dir, note: 'n' })).json;
+
+  const res = await call('GET', `/api/sessions/${key}?t=${token}`);
+  assert.equal(res.json.view, 'unified');
+});
+
+test('PATCH view rejects an unknown value', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.write('a.js', 'two\n');
+
+  const { call } = await startApp(t);
+  const { key, token } = (await call('POST', '/api/sessions', { repo: repo.dir, note: 'n' })).json;
+
+  const res = await call('PATCH', `/api/sessions/${key}/view?t=${token}`, { view: 'sideways' });
+  assert.equal(res.status, 400);
+});
+
+test('PATCH view accepts split and unified, and publishes view', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.write('a.js', 'two\n');
+
+  const { call, hub } = await startApp(t);
+  const { key, token } = (await call('POST', '/api/sessions', { repo: repo.dir, note: 'n' })).json;
+
+  /** @type {string[]} */
+  const published = [];
+  hub.publish = (k, event) => { published.push(event); return 1; };
+
+  const split = await call('PATCH', `/api/sessions/${key}/view?t=${token}`, { view: 'split' });
+  assert.equal(split.status, 200);
+  assert.equal(split.json.view, 'split');
+  assert.equal((await call('GET', `/api/sessions/${key}?t=${token}`)).json.view, 'split');
+
+  const unified = await call('PATCH', `/api/sessions/${key}/view?t=${token}`, { view: 'unified' });
+  assert.equal(unified.json.view, 'unified');
+  assert.deepEqual(published, ['view', 'view']);
+});
+
+test('a reused session keeps its existing view rather than resetting to unified', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.write('a.js', 'two\n');
+
+  const { call } = await startApp(t);
+  const first = (await call('POST', '/api/sessions', { repo: repo.dir, note: 'n' })).json;
+  await call('PATCH', `/api/sessions/${first.key}/view?t=${first.token}`, { view: 'split' });
+
+  const second = (await call('POST', '/api/sessions', { repo: repo.dir, note: 'n' })).json;
+  assert.equal(second.reused, true);
+
+  const state = (await call('GET', `/api/sessions/${second.key}?t=${second.token}`)).json;
+  assert.equal(state.view, 'split');
+});
+
+test('PATCH view on a closed session is refused', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.write('a.js', 'two\n');
+
+  const { call } = await startApp(t);
+  const { key, token } = (await call('POST', '/api/sessions', { repo: repo.dir, note: 'n' })).json;
+  await call('POST', `/api/sessions/${key}/close?t=${token}`, { closedBy: 'human' });
+
+  const res = await call('PATCH', `/api/sessions/${key}/view?t=${token}`, { view: 'split' });
+  assert.equal(res.status, 409);
+});

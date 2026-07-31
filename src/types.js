@@ -91,6 +91,7 @@
  * @property {Comment[]} comments — All comments, any status.
  * @property {{role: 'agent'|'human', text: string, at: string}[]} chat — Message log.
  * @property {{holder: number, expiresAt: string}|null} lease — Current waiter, null when free.
+ * @property {'unified'|'split'} view — Reading preference, per session, not per file.
  * @property {string} createdAt — ISO timestamp.
  * @property {string} updatedAt — ISO timestamp.
  */

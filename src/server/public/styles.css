@@ -1,5 +1,6 @@
 :root {
   --paper: #0e1417;
+  --paper-2: #121a1e;
   --card: #172126;
   --ink: #e7edef;
   --mid: #8c9ba1;
@@ -90,6 +91,14 @@ main { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); mi
 .row.add > .t { background: var(--add-bg); color: var(--add); }
 .row.del > .t { background: var(--del-bg); color: var(--del); }
 .row.picked > .t { box-shadow: inset 3px 0 0 var(--accent); }
+
+.row.split { grid-template-columns: 44px minmax(0, 1fr) 44px minmax(0, 1fr); }
+.row.split > .t { border-right: 1px solid var(--hair); }
+.row.split > .t:last-child { border-right: 0; }
+.row.split > .t.blank { background: var(--paper-2); }
+.row.split > .t.del { background: var(--del-bg); color: var(--del); }
+.row.split > .t.add { background: var(--add-bg); color: var(--add); }
+.row.split > .t.picked { box-shadow: inset 3px 0 0 var(--accent); }
 
 .expand { color: var(--mid); padding: 4px 12px; cursor: pointer; background: none; border: 0; font: inherit; }
 .large { padding: 16px; color: var(--mid); }
