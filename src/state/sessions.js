@@ -32,11 +32,11 @@ export const sessionUrl = (key, token, port) => `http://127.0.0.1:${port}/sessio
 
 /**
  * @param {State} state
- * @param {{repo: string, note: string, snapshot: Snapshot, port: number, now: number, base?: string}} input
+ * @param {{repo: string, note: string, snapshot: Snapshot, port: number, now: number, base?: string, pr?: number|null}} input
  * @returns {{session: Session, reused: boolean}}
  */
 export const openOrReuse = (state, {
-  repo, note, snapshot, port, now, base,
+  repo, note, snapshot, port, now, base, pr,
 }) => {
   const key = sessionKey(repo);
   const at = new Date(now).toISOString();
@@ -47,6 +47,9 @@ export const openOrReuse = (state, {
     // would leave them pointing at a different comparison.
     if (base !== undefined && base !== existing.base) {
       throw new StateError(409, `session is already open with base ${existing.base ?? 'the working tree'}, cannot switch to ${base}`);
+    }
+    if (pr !== undefined && pr !== existing.pr) {
+      throw new StateError(409, `session is already open with base ${existing.base ?? 'the working tree'}, cannot switch to PR ${pr}`);
     }
     // A bare `cr open` sends no note; that must not wipe one set earlier.
     if (note !== '') existing.note = note;
@@ -64,6 +67,7 @@ export const openOrReuse = (state, {
     token,
     repo,
     base: base ?? null,
+    pr: pr ?? null,
     url: sessionUrl(key, token, port),
     status: 'open',
     closedBy: null,

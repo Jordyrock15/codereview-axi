@@ -83,6 +83,7 @@
  * @property {string} token — Random 32-byte hex secret gating API access.
  * @property {string} repo — Absolute worktree toplevel path.
  * @property {string|null} base — Ref the diff is compared against, null for the working diff.
+ * @property {number|null} pr — Pull request number this session reviews, null when opened without `--pr`.
  * @property {string} url — Browser URL including the token.
  * @property {'open'|'closed'} status — Whether the session is live.
  * @property {'human'|'agent'|null} closedBy — Who ended it, null while open.

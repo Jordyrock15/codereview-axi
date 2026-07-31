@@ -63,6 +63,70 @@ test('open --base main prints a diff containing the branch commit, unlike a bare
   assert.deepEqual(json.files.map((/** @type {{path: string}} */ f) => f.path), ['a.js']);
 });
 
+test('open --pr with --base is a usage error and never resolves the PR', async (t) => {
+  const { run, repo } = await setup(t);
+  const resolvePr = async () => { throw new Error('resolvePr must not be called when --pr and --base conflict'); };
+  const result = await run({
+    argv: ['open', '--pr', '5', '--base', 'main', '--no-browser'], cwd: repo.dir, resolvePr,
+  });
+  assert.equal(result.code, 1);
+  assert.match(result.out, /--pr and --base cannot be combined/);
+});
+
+test('open --pr rejects a non-integer PR number without invoking gh', async (t) => {
+  const { run, repo } = await setup(t);
+  const result = await run({ argv: ['open', '--pr', 'abc', '--no-browser'], cwd: repo.dir });
+  assert.equal(result.code, 1);
+  assert.match(result.out, /number/);
+});
+
+test('open --pr exits 1 with a readable message when gh fails to resolve the PR', async (t) => {
+  const { run, repo } = await setup(t);
+  const resolvePr = async () => { throw new Error('gh could not resolve PR 9: not authenticated to github.com, or use --base instead'); };
+  const result = await run({ argv: ['open', '--pr', '9', '--no-browser'], cwd: repo.dir, resolvePr });
+  assert.equal(result.code, 1);
+  assert.match(result.out, /not authenticated/);
+});
+
+test('open --pr refuses when the current branch is not the PR head, and touches no git state', async (t) => {
+  const { run, repo } = await setup(t);
+  const before = {
+    status: await repo.run(['status', '--porcelain']),
+    head: await repo.run(['rev-parse', 'HEAD']),
+    reflog: await repo.run(['reflog']),
+  };
+
+  const resolvePr = async () => ({ base: 'main', head: 'feature-x' });
+  const result = await run({ argv: ['open', '--pr', '7', '--no-browser'], cwd: repo.dir, resolvePr });
+
+  assert.equal(result.code, 1);
+  assert.match(result.out, /feature-x/);
+  assert.match(result.out, /git fetch origin feature-x && git checkout feature-x/);
+
+  const after = {
+    status: await repo.run(['status', '--porcelain']),
+    head: await repo.run(['rev-parse', 'HEAD']),
+    reflog: await repo.run(['reflog']),
+  };
+  assert.deepEqual(after, before, '--pr must never fetch or check out');
+});
+
+test('open --pr succeeds on the PR head branch and records the pr on the session', async (t) => {
+  const { run, repo } = await setup(t);
+  await repo.run(['checkout', '-b', 'feature-x']);
+  await repo.write('a.js', 'one\ncommitted change\nthree\n');
+  await repo.run(['add', '-A']);
+  await repo.run(['commit', '-m', 'branch change']);
+
+  const resolvePr = async () => ({ base: 'main', head: 'feature-x' });
+  const result = await run({ argv: ['open', '--pr', '11', '--no-browser'], cwd: repo.dir, resolvePr });
+
+  assert.equal(result.code, 0);
+  const json = JSON.parse(result.out);
+  assert.equal(json.base, 'main');
+  assert.equal(json.pr, 11);
+});
+
 test('open exits 2 on a clean tree', async (t) => {
   const { cr, repo } = await setup(t);
   await repo.run(['checkout', '--', 'a.js']);

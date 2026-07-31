@@ -11,6 +11,7 @@ import {
   untrackedPaths,
   readWorkingFile,
   isBinaryPath,
+  currentBranch,
 } from '../../src/diff/git.js';
 
 test('toplevel returns the worktree root', async (t) => {
@@ -141,6 +142,14 @@ test('diffWorking with no base behaves exactly as before', async (t) => {
 
   assert.equal(await diffWorking(repo.dir), await diffWorking(repo.dir, undefined));
   assert.match(await diffWorking(repo.dir), /\+two/);
+});
+
+test('currentBranch reports the checked-out branch', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.run(['checkout', '-q', '-b', 'feature-x']);
+
+  assert.equal(await currentBranch(repo.dir), 'feature-x');
 });
 
 test('untrackedPaths lists new files and respects gitignore', async (t) => {

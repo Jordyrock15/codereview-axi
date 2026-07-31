@@ -38,6 +38,12 @@ export const toplevel = async (cwd) => {
   }
 };
 
+/**
+ * @param {string} repo
+ * @returns {Promise<string>}
+ */
+export const currentBranch = async (repo) => (await git(repo, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
+
 const DIFF_FLAGS = ['--no-color', '--no-ext-diff', '-M', '--find-renames', '-U3'];
 
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';

@@ -135,10 +135,11 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
         if (root === null) throw new StateError(400, `${requested} is not inside a git worktree`);
 
         const base = typeof body?.base === 'string' ? body.base : undefined;
+        const pr = typeof body?.pr === 'number' && Number.isInteger(body.pr) ? body.pr : undefined;
         const at = now();
 
-        // A base conflict is a state-layer refusal, independent of what the
-        // requested base's diff contains, so it must be checked before an
+        // A base (or pr) conflict is a state-layer refusal, independent of what
+        // the requested base's diff contains, so it must be checked before an
         // empty diff for that base gets the chance to 422 first.
         const { session, reused, snapshot } = await mutateState(async (state) => {
           reapSessions(state, at);
@@ -148,12 +149,15 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
           if (existing && existing.status === 'open' && base !== undefined && base !== existing.base) {
             throw new StateError(409, `session is already open with base ${existing.base ?? 'the working tree'}, cannot switch to ${base}`);
           }
+          if (existing && existing.status === 'open' && pr !== undefined && pr !== existing.pr) {
+            throw new StateError(409, `session is already open with base ${existing.base ?? 'the working tree'}, cannot switch to PR ${pr}`);
+          }
 
           const built = await buildSnapshot(root, base);
           if (built.files.length === 0) throw new StateError(422, 'nothing to review, the working tree is clean');
 
           const result = openOrReuse(state, {
-            repo: root, note: String(body?.note ?? ''), snapshot: built, port, now: at, base,
+            repo: root, note: String(body?.note ?? ''), snapshot: built, port, now: at, base, pr,
           });
           // A reused session's threads are anchored against the old snapshot;
           // without this a second `cr open` leaves them silently pointing at
@@ -171,6 +175,7 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
             reused,
             note: session.note,
             base: session.base,
+            pr: session.pr,
             files: snapshot.files.map(fileMeta),
             totals: snapshot.totals,
             comments: session.comments.map(({ id, file, startLine, endLine, status, verdict: v }) => (

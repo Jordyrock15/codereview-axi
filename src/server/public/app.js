@@ -611,7 +611,13 @@ const load = async () => {
   const session = await res.json();
   view.session = session;
   view.current ??= session.snapshot.files[0]?.path ?? null;
-  $('note').textContent = session.note || 'no note';
+  const comparison = session.pr
+    ? `reviewing PR ${session.pr} against ${session.base}`
+    : session.base
+      ? `against ${session.base}`
+      : '';
+  const noteText = session.note || 'no note';
+  $('note').textContent = comparison ? `${comparison}: ${noteText}` : noteText;
   // The label names what clicking will switch to, read from the session so two
   // tabs cannot disagree, never from local state.
   $('view').textContent = session.view === 'split' ? 'unified' : 'split';

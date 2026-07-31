@@ -1,14 +1,15 @@
 import { parseArgs } from './args.js';
 import { ensureServer, request, CliError } from './client.js';
 import { openUrl } from './browser.js';
-import { toplevel } from '../diff/git.js';
+import { resolvePr as defaultResolvePr } from './pr.js';
+import { toplevel, currentBranch } from '../diff/git.js';
 import { loadState } from '../state/store.js';
 import { sessionKey } from '../state/sessions.js';
 
 const USAGE = [
   'usage: cr <verb> [flags]',
   '',
-  '  open     [--note TEXT] [--base REF] [--no-browser]   start or resume a review, against a base ref when given',
+  '  open     [--note TEXT] [--base REF | --pr N] [--no-browser]   start or resume a review, against a base ref or a pull request',
   '  wait     [--timeout 300] [--say TEXT]   block until the human sends comments',
   '  list     [--status open]                 print comments without blocking',
   '  reply    --id N --status S --body TEXT   answer one comment (fixed|explained|skipped)',
@@ -44,15 +45,44 @@ const unwrap = (res) => {
   throw new CliError(1, res.json?.error ?? `request failed with ${res.status}`);
 };
 
-/** @type {Record<string, (input: {flags: Record<string, string|boolean>, cwd: string, port: number}) => Promise<unknown>>} */
+/**
+ * @typedef {(number: number|string, options?: {run?: (args: string[]) => Promise<string>}) => Promise<{base: string, head: string}>} ResolvePr
+ */
+
+/** @type {Record<string, (input: {flags: Record<string, string|boolean>, cwd: string, port: number, resolvePr: ResolvePr}) => Promise<unknown>>} */
 const HANDLERS = {
-  open: async ({ flags, cwd, port }) => {
+  open: async ({ flags, cwd, port, resolvePr }) => {
     const root = await toplevel(cwd);
     if (root === null) throw new CliError(1, `${cwd} is not inside a git worktree`);
 
-    /** @type {{repo: string, note: string, base?: string}} */
+    if (flags.pr !== undefined && typeof flags.base === 'string') {
+      throw new CliError(1, '--pr and --base cannot be combined, the pull request determines the base');
+    }
+
+    /** @type {{repo: string, note: string, base?: string, pr?: number}} */
     const body = { repo: root, note: typeof flags.note === 'string' ? flags.note : '' };
-    if (typeof flags.base === 'string') body.base = flags.base;
+
+    if (flags.pr !== undefined) {
+      if (typeof flags.pr !== 'string') throw new CliError(1, '--pr needs a number, e.g. --pr 123');
+
+      let resolved;
+      try {
+        resolved = await resolvePr(flags.pr);
+      } catch (err) {
+        throw new CliError(1, err instanceof Error ? err.message : String(err));
+      }
+
+      const branch = await currentBranch(root);
+      if (branch !== resolved.head) {
+        throw new CliError(1, `PR ${flags.pr} reviews ${resolved.head}, but the current branch is ${branch}. Run: git fetch origin ${resolved.head} && git checkout ${resolved.head}`);
+      }
+
+      body.base = resolved.base;
+      body.pr = Number(flags.pr);
+    } else if (typeof flags.base === 'string') {
+      body.base = flags.base;
+    }
+
     const created = unwrap(await request(port, 'POST', '/api/sessions', body));
 
     if (flags['no-browser'] !== true) await openUrl(created.url);
@@ -113,10 +143,12 @@ const HANDLERS = {
 };
 
 /**
- * @param {{argv: string[], cwd: string, env: NodeJS.ProcessEnv}} input
+ * `resolvePr` is injectable so tests can drive the `--pr` wiring without a
+ * real `gh` on PATH, the same seam `resolvePr` itself uses for `gh`.
+ * @param {{argv: string[], cwd: string, env?: NodeJS.ProcessEnv, resolvePr?: ResolvePr}} input
  * @returns {Promise<{code: number, out: string}>}
  */
-export const run = async ({ argv, cwd }) => {
+export const run = async ({ argv, cwd, resolvePr = defaultResolvePr }) => {
   const { verb, flags } = parseArgs(argv);
 
   if (verb === 'help' || flags.help === true) return { code: 0, out: USAGE };
@@ -126,7 +158,9 @@ export const run = async ({ argv, cwd }) => {
 
   try {
     const port = await ensureServer();
-    const result = await handler({ flags, cwd, port });
+    const result = await handler({
+      flags, cwd, port, resolvePr,
+    });
     return { code: 0, out: JSON.stringify(result, null, 2) };
   } catch (err) {
     if (err instanceof CliError) return { code: err.code, out: err.message };

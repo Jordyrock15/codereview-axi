@@ -130,6 +130,45 @@ test('reopening with the same base is fine', () => {
   assert.equal(open(state, { base: 'main', now: NOW + 10 }).reused, true);
 });
 
+test('openOrReuse records the pr number alongside the base', () => {
+  /** @type {State} */
+  const state = { sessions: {} };
+  const { session } = open(state, { base: 'main', pr: 7 });
+  assert.equal(session.pr, 7);
+});
+
+test('a session with no pr records null', () => {
+  /** @type {State} */
+  const state = { sessions: {} };
+  assert.equal(open(state).session.pr, null);
+});
+
+test('reopening with no pr keeps the stored one', () => {
+  /** @type {State} */
+  const state = { sessions: {} };
+  open(state, { base: 'main', pr: 7 });
+  assert.equal(open(state, { now: NOW + 10 }).session.pr, 7);
+});
+
+test('reopening with a different pr is refused', () => {
+  /** @type {State} */
+  const state = { sessions: {} };
+  open(state, { base: 'main', pr: 7 });
+
+  assert.throws(() => open(state, { base: 'main', pr: 8, now: NOW + 10 }), (err) => {
+    assert.equal(/** @type {any} */ (err).status, 409);
+    assert.match(/** @type {Error} */ (err).message, /PR/);
+    return true;
+  });
+});
+
+test('reopening with the same pr is fine', () => {
+  /** @type {State} */
+  const state = { sessions: {} };
+  open(state, { base: 'main', pr: 7 });
+  assert.equal(open(state, { base: 'main', pr: 7, now: NOW + 10 }).reused, true);
+});
+
 test('a closed session with a different base is reopened as a fresh session', () => {
   /** @type {State} */
   const state = { sessions: {} };

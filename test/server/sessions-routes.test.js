@@ -53,6 +53,46 @@ test('POST /api/sessions with a base stores it and reports it', async (t) => {
   assert.equal(state.base, 'main');
 });
 
+test('POST /api/sessions with a pr stores it alongside the base', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.run(['checkout', '-b', 'feature']);
+  await repo.write('a.js', 'two\n');
+  await repo.run(['add', '-A']);
+  await repo.run(['commit', '-m', 'feature change']);
+
+  const { call } = await startApp(t);
+  const res = await call('POST', '/api/sessions', {
+    repo: repo.dir, note: 'n', base: 'main', pr: 42,
+  });
+
+  assert.equal(res.status, 201);
+  assert.equal(res.json.pr, 42);
+
+  const state = (await call('GET', `/api/sessions/${res.json.key}?t=${res.json.token}`)).json;
+  assert.equal(state.pr, 42);
+});
+
+test('a pr conflict is refused with 409 even when the bases happen to match', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.run(['checkout', '-b', 'feature']);
+  await repo.write('a.js', 'two\n');
+  await repo.run(['add', '-A']);
+  await repo.run(['commit', '-m', 'feature change']);
+
+  const { call } = await startApp(t);
+  await call('POST', '/api/sessions', {
+    repo: repo.dir, note: 'n', base: 'main', pr: 42,
+  });
+
+  const res = await call('POST', '/api/sessions', {
+    repo: repo.dir, note: 'n', base: 'main', pr: 43,
+  });
+  assert.equal(res.status, 409);
+  assert.match(res.json.error, /PR/);
+});
+
 test('refresh with a stored base recomputes against the same merge base after a further commit', async (t) => {
   const repo = await makeRepo({ 'a.js': 'one\n' });
   t.after(repo.cleanup);
