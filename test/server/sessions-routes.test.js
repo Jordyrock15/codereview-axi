@@ -73,6 +73,37 @@ test('POST /api/sessions with a pr stores it alongside the base', async (t) => {
   assert.equal(state.pr, 42);
 });
 
+test('POST /api/sessions with a pr but no base is rejected, a PR session without a base is meaningless', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+
+  const { call } = await startApp(t);
+  const res = await call('POST', '/api/sessions', { repo: repo.dir, note: 'n', pr: 42 });
+
+  assert.equal(res.status, 400);
+  assert.match(res.json.error, /base/);
+});
+
+test('a pr conflict names the incumbent PR, not just its base', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.run(['checkout', '-b', 'feature']);
+  await repo.write('a.js', 'two\n');
+  await repo.run(['add', '-A']);
+  await repo.run(['commit', '-m', 'feature change']);
+
+  const { call } = await startApp(t);
+  await call('POST', '/api/sessions', {
+    repo: repo.dir, note: 'n', base: 'main', pr: 42,
+  });
+
+  const res = await call('POST', '/api/sessions', {
+    repo: repo.dir, note: 'n', base: 'main', pr: 43,
+  });
+  assert.equal(res.status, 409);
+  assert.match(res.json.error, /PR 42/);
+});
+
 test('a pr conflict is refused with 409 even when the bases happen to match', async (t) => {
   const repo = await makeRepo({ 'a.js': 'one\n' });
   t.after(repo.cleanup);

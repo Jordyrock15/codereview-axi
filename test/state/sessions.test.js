@@ -169,6 +169,28 @@ test('reopening with the same pr is fine', () => {
   assert.equal(open(state, { base: 'main', pr: 7, now: NOW + 10 }).reused, true);
 });
 
+test('switching PRs names the incumbent PR, not just its base', () => {
+  /** @type {State} */
+  const state = { sessions: {} };
+  open(state, { base: 'main', pr: 7 });
+
+  assert.throws(() => open(state, { base: 'main', pr: 8, now: NOW + 10 }), (err) => {
+    assert.match(/** @type {Error} */ (err).message, /PR 7/);
+    return true;
+  });
+});
+
+test('a legacy session with no pr field is normalised to null on reuse', () => {
+  /** @type {State} */
+  const state = { sessions: {} };
+  open(state, { base: 'main' });
+  const key = sessionKey('/tmp/work');
+  delete state.sessions[key].pr;
+
+  open(state, { base: 'main', now: NOW + 10 });
+  assert.equal(state.sessions[key].pr, null);
+});
+
 test('a closed session with a different base is reopened as a fresh session', () => {
   /** @type {State} */
   const state = { sessions: {} };

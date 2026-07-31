@@ -40,9 +40,13 @@ export const toplevel = async (cwd) => {
 
 /**
  * @param {string} repo
- * @returns {Promise<string>}
+ * @returns {Promise<string>} The branch name, or 'detached HEAD' when there is none.
  */
-export const currentBranch = async (repo) => (await git(repo, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
+export const currentBranch = async (repo) => {
+  const out = (await git(repo, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
+  // git never lets a real branch be named HEAD, so this literal means detached.
+  return out === 'HEAD' ? 'detached HEAD' : out;
+};
 
 const DIFF_FLAGS = ['--no-color', '--no-ext-diff', '-M', '--find-renames', '-U3'];
 

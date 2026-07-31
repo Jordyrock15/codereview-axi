@@ -49,8 +49,12 @@ export const openOrReuse = (state, {
       throw new StateError(409, `session is already open with base ${existing.base ?? 'the working tree'}, cannot switch to ${base}`);
     }
     if (pr !== undefined && pr !== existing.pr) {
-      throw new StateError(409, `session is already open with base ${existing.base ?? 'the working tree'}, cannot switch to PR ${pr}`);
+      const incumbent = existing.pr != null ? `PR ${existing.pr}` : `base ${existing.base ?? 'the working tree'}`;
+      throw new StateError(409, `session is already open with ${incumbent}, cannot switch to PR ${pr}`);
     }
+    // Sessions created before `pr` existed are pr-less in memory; normalise
+    // to the number|null contract without disturbing the reopen rules above.
+    existing.pr ??= pr ?? null;
     // A bare `cr open` sends no note; that must not wipe one set earlier.
     if (note !== '') existing.note = note;
     existing.snapshot = snapshot;

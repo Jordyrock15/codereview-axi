@@ -80,6 +80,14 @@ test('open --pr rejects a non-integer PR number without invoking gh', async (t) 
   assert.match(result.out, /number/);
 });
 
+test('open --pr with no value is a usage error without invoking gh', async (t) => {
+  const { run, repo } = await setup(t);
+  const resolvePr = async () => { throw new Error('resolvePr must not be called when --pr has no value'); };
+  const result = await run({ argv: ['open', '--pr', '--no-browser'], cwd: repo.dir, resolvePr });
+  assert.equal(result.code, 1);
+  assert.match(result.out, /number/);
+});
+
 test('open --pr exits 1 with a readable message when gh fails to resolve the PR', async (t) => {
   const { run, repo } = await setup(t);
   const resolvePr = async () => { throw new Error('gh could not resolve PR 9: not authenticated to github.com, or use --base instead'); };
@@ -109,6 +117,16 @@ test('open --pr refuses when the current branch is not the PR head, and touches 
     reflog: await repo.run(['reflog']),
   };
   assert.deepEqual(after, before, '--pr must never fetch or check out');
+});
+
+test('open --pr 007 reports the normalised number, not the raw flag, in the refusal', async (t) => {
+  const { run, repo } = await setup(t);
+  const resolvePr = async () => ({ base: 'main', head: 'feature-x' });
+  const result = await run({ argv: ['open', '--pr', '007', '--no-browser'], cwd: repo.dir, resolvePr });
+
+  assert.equal(result.code, 1);
+  assert.match(result.out, /PR 7 /);
+  assert.doesNotMatch(result.out, /PR 007/);
 });
 
 test('open --pr succeeds on the PR head branch and records the pr on the session', async (t) => {

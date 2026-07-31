@@ -136,6 +136,9 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
 
         const base = typeof body?.base === 'string' ? body.base : undefined;
         const pr = typeof body?.pr === 'number' && Number.isInteger(body.pr) ? body.pr : undefined;
+        if (pr !== undefined && base === undefined) {
+          throw new StateError(400, 'a PR session needs a base as well, none was given');
+        }
         const at = now();
 
         // A base (or pr) conflict is a state-layer refusal, independent of what
@@ -150,7 +153,8 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
             throw new StateError(409, `session is already open with base ${existing.base ?? 'the working tree'}, cannot switch to ${base}`);
           }
           if (existing && existing.status === 'open' && pr !== undefined && pr !== existing.pr) {
-            throw new StateError(409, `session is already open with base ${existing.base ?? 'the working tree'}, cannot switch to PR ${pr}`);
+            const incumbent = existing.pr != null ? `PR ${existing.pr}` : `base ${existing.base ?? 'the working tree'}`;
+            throw new StateError(409, `session is already open with ${incumbent}, cannot switch to PR ${pr}`);
           }
 
           const built = await buildSnapshot(root, base);

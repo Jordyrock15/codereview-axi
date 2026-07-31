@@ -152,6 +152,14 @@ test('currentBranch reports the checked-out branch', async (t) => {
   assert.equal(await currentBranch(repo.dir), 'feature-x');
 });
 
+test('currentBranch names a detached HEAD instead of echoing the literal HEAD', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.run(['checkout', '-q', '--detach', 'HEAD']);
+
+  assert.equal(await currentBranch(repo.dir), 'detached HEAD');
+});
+
 test('untrackedPaths lists new files and respects gitignore', async (t) => {
   const repo = await makeRepo({ 'a.js': 'one\n', '.gitignore': 'ignored.js\n' });
   t.after(repo.cleanup);

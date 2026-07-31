@@ -1,7 +1,7 @@
 import { parseArgs } from './args.js';
 import { ensureServer, request, CliError } from './client.js';
 import { openUrl } from './browser.js';
-import { resolvePr as defaultResolvePr } from './pr.js';
+import { resolvePr as defaultResolvePr, parsePrNumber } from './pr.js';
 import { toplevel, currentBranch } from '../diff/git.js';
 import { loadState } from '../state/store.js';
 import { sessionKey } from '../state/sessions.js';
@@ -46,7 +46,7 @@ const unwrap = (res) => {
 };
 
 /**
- * @typedef {(number: number|string, options?: {run?: (args: string[]) => Promise<string>}) => Promise<{base: string, head: string}>} ResolvePr
+ * @typedef {(number: number|string, options?: {run?: (args: string[], cwd?: string) => Promise<string>, cwd?: string}) => Promise<{base: string, head: string}>} ResolvePr
  */
 
 /** @type {Record<string, (input: {flags: Record<string, string|boolean>, cwd: string, port: number, resolvePr: ResolvePr}) => Promise<unknown>>} */
@@ -63,22 +63,27 @@ const HANDLERS = {
     const body = { repo: root, note: typeof flags.note === 'string' ? flags.note : '' };
 
     if (flags.pr !== undefined) {
-      if (typeof flags.pr !== 'string') throw new CliError(1, '--pr needs a number, e.g. --pr 123');
+      let n;
+      try {
+        n = parsePrNumber(flags.pr);
+      } catch (err) {
+        throw new CliError(1, err instanceof Error ? err.message : String(err));
+      }
 
       let resolved;
       try {
-        resolved = await resolvePr(flags.pr);
+        resolved = await resolvePr(n, { cwd: root });
       } catch (err) {
         throw new CliError(1, err instanceof Error ? err.message : String(err));
       }
 
       const branch = await currentBranch(root);
       if (branch !== resolved.head) {
-        throw new CliError(1, `PR ${flags.pr} reviews ${resolved.head}, but the current branch is ${branch}. Run: git fetch origin ${resolved.head} && git checkout ${resolved.head}`);
+        throw new CliError(1, `PR ${n} reviews ${resolved.head}, but the current branch is ${branch}. Run: git fetch origin ${resolved.head} && git checkout ${resolved.head}`);
       }
 
       body.base = resolved.base;
-      body.pr = Number(flags.pr);
+      body.pr = n;
     } else if (typeof flags.base === 'string') {
       body.base = flags.base;
     }
