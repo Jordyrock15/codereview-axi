@@ -36,6 +36,7 @@ export const shellHtml = (key) => `<!doctype html>
 <header id="bar">
   <span id="note"></span>
   <span id="counts"></span>
+  <span id="activity" data-delivery="idle"></span>
   <button id="view" title="Toggle side-by-side">split</button>
   <button id="send" disabled>Send</button>
   <button id="done">Done</button>
