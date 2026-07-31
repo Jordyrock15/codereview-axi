@@ -120,6 +120,20 @@ test('totals count files and lines', async (t) => {
   assert.equal(totals.removed, 1);
 });
 
+test('buildSnapshot against a base sees the branch commits', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\ntwo\n' });
+  t.after(repo.cleanup);
+
+  await repo.run(['checkout', '-q', '-b', 'feature']);
+  await repo.write('a.js', 'one\nCHANGED\n');
+  await repo.run(['commit', '-qam', 'branch work']);
+
+  const file = find(await buildSnapshot(repo.dir, 'main'), 'a.js');
+
+  assert.equal(file.added, 1);
+  assert.equal(file.removed, 1);
+});
+
 test('returns an empty snapshot for a clean tree', async (t) => {
   const repo = await makeRepo({ 'a.js': 'one\n' });
   t.after(repo.cleanup);

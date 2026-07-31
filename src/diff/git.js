@@ -43,11 +43,36 @@ const DIFF_FLAGS = ['--no-color', '--no-ext-diff', '-M', '--find-renames', '-U3'
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
 /**
- * HEAD against the working tree: staged and unstaged changes in one diff.
+ * Where the branch diverged from its base. That, not the base tip, is the
+ * review surface: diffing the tip would show independent work on the base
+ * branch reversed.
  * @param {string} repo
+ * @param {string} base
  * @returns {Promise<string>}
  */
-export const diffWorking = async (repo) => {
+export const mergeBase = async (repo, base) => {
+  try {
+    const out = await git(repo, ['merge-base', base, 'HEAD']);
+    const sha = out.trim();
+    if (sha === '') throw new Error(`no common history between ${base} and HEAD`);
+    return sha;
+  } catch (/** @type {any} */ err) {
+    // Some git versions reject on unrelated histories rather than resolving
+    // empty; empty stderr is what tells that apart from a genuine ref error.
+    if (err.stderr === '') throw new Error(`no common history between ${base} and HEAD`);
+    throw err;
+  }
+};
+
+/**
+ * HEAD (or a base ref's merge base) against the working tree: staged and
+ * unstaged changes in one diff.
+ * @param {string} repo
+ * @param {string} [base]
+ * @returns {Promise<string>}
+ */
+export const diffWorking = async (repo, base) => {
+  if (base !== undefined) return git(repo, ['diff', await mergeBase(repo, base), ...DIFF_FLAGS]);
   try {
     await git(repo, ['rev-parse', '--verify', 'HEAD']);
   } catch {

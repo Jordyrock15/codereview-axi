@@ -6,6 +6,7 @@ import { writeFile, rm, symlink } from 'node:fs/promises';
 import { makeRepo } from '../helpers/repo.js';
 import {
   toplevel,
+  mergeBase,
   diffWorking,
   untrackedPaths,
   readWorkingFile,
@@ -67,6 +68,79 @@ test('diffWorking resolves rather than rejects in a repo with no commits', async
 
   const out = await diffWorking(repo.dir);
   assert.match(out, /\+one/);
+});
+
+test('mergeBase finds the divergence point', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  const base = (await repo.run(['rev-parse', 'HEAD'])).trim();
+
+  await repo.run(['checkout', '-q', '-b', 'feature']);
+  await repo.write('a.js', 'two\n');
+  await repo.run(['commit', '-qam', 'branch work']);
+
+  assert.equal(await mergeBase(repo.dir, 'main'), base);
+});
+
+test('mergeBase rejects a ref that does not exist', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+
+  await assert.rejects(() => mergeBase(repo.dir, 'no-such-ref'), /no-such-ref/);
+});
+
+test('mergeBase rejects unrelated histories', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.run(['checkout', '-q', '--orphan', 'unrelated']);
+  await repo.write('b.js', 'other\n');
+  await repo.run(['add', '-A']);
+  await repo.run(['commit', '-qm', 'unrelated root']);
+
+  await assert.rejects(() => mergeBase(repo.dir, 'main'), /common history/);
+});
+
+test('diffWorking against a base excludes independent work on that base', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n', 'other.js': 'base\n' });
+  t.after(repo.cleanup);
+
+  await repo.run(['checkout', '-q', '-b', 'feature']);
+  await repo.write('a.js', 'from the branch\n');
+  await repo.run(['commit', '-qam', 'branch work']);
+
+  await repo.run(['checkout', '-q', 'main']);
+  await repo.write('other.js', 'moved on\n');
+  await repo.run(['commit', '-qam', 'independent work']);
+  await repo.run(['checkout', '-q', 'feature']);
+
+  const out = await diffWorking(repo.dir, 'main');
+
+  assert.match(out, /a\.js/);
+  assert.equal(/other\.js/.test(out), false, 'independent work on the base must not appear');
+});
+
+test('diffWorking against a base includes an uncommitted fix', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+
+  await repo.run(['checkout', '-q', '-b', 'feature']);
+  await repo.write('a.js', 'committed on the branch\n');
+  await repo.run(['commit', '-qam', 'branch work']);
+  await repo.write('a.js', 'and then fixed locally\n');
+
+  const out = await diffWorking(repo.dir, 'main');
+
+  assert.match(out, /and then fixed locally/);
+  assert.equal(/committed on the branch/.test(out), false, 'the intermediate commit is not the surface');
+});
+
+test('diffWorking with no base behaves exactly as before', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.write('a.js', 'two\n');
+
+  assert.equal(await diffWorking(repo.dir), await diffWorking(repo.dir, undefined));
+  assert.match(await diffWorking(repo.dir), /\+two/);
 });
 
 test('untrackedPaths lists new files and respects gitignore', async (t) => {

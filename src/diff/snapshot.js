@@ -57,11 +57,12 @@ const untrackedFile = async (repo, relPath) => {
 /**
  * Computes the full working diff for a worktree.
  * @param {string} repo
+ * @param {string} [base]
  * @returns {Promise<Snapshot>}
  */
-export const buildSnapshot = async (repo) => {
+export const buildSnapshot = async (repo, base) => {
   const [working, untracked] = await Promise.all([
-    diffWorking(repo),
+    diffWorking(repo, base),
     untrackedPaths(repo),
   ]);
 
