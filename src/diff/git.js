@@ -53,6 +53,19 @@ const DIFF_FLAGS = ['--no-color', '--no-ext-diff', '-M', '--find-renames', '-U3'
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
 /**
+ * @param {string} message
+ * @param {'missing-ref'|'unrelated-history'} reason
+ * @returns {Error}
+ */
+const baseFailure = (message, reason) => {
+  const err = new Error(message);
+  // A caller further up (the server route) needs to tell these two apart to
+  // give each its own status and hint, without re-parsing git's prose.
+  /** @type {any} */ (err).crReason = reason;
+  return err;
+};
+
+/**
  * Where the branch diverged from its base. That, not the base tip, is the
  * review surface: diffing the tip would show independent work on the base
  * branch reversed.
@@ -65,16 +78,25 @@ export const mergeBase = async (repo, base) => {
   try {
     out = await git(repo, ['merge-base', base, 'HEAD']);
   } catch (/** @type {any} */ err) {
-    // git exits 128 for a bad revision or ref, worth rethrowing as-is;
-    // anything else (unrelated histories exit 1) gets our own message.
-    if (err.code === 128) throw err;
-    throw new Error(`no common history between ${base} and HEAD`);
+    // git exits 128 for a bad revision or ref; anything else (unrelated
+    // histories exit 1) is the other case. Either way, keep git's own detail.
+    if (err.code === 128) {
+      const detail = typeof err.stderr === 'string' && err.stderr.trim() !== ''
+        ? err.stderr.trim().split('\n')[0]
+        : err.message;
+      throw baseFailure(`could not resolve ${base}: ${detail}`, 'missing-ref');
+    }
+    throw baseFailure(`no common history between ${base} and HEAD`, 'unrelated-history');
   }
   const sha = out.trim();
   // Some git versions resolve empty on unrelated histories rather than rejecting.
-  if (sha === '') throw new Error(`no common history between ${base} and HEAD`);
+  if (sha === '') throw baseFailure(`no common history between ${base} and HEAD`, 'unrelated-history');
   return sha;
 };
+
+// core.quotePath defaults on, so a non-ASCII filename would otherwise arrive
+// C-escaped in the header line and fail the plain path regex in parse.js.
+const QUOTEPATH_OFF = ['-c', 'core.quotePath=false'];
 
 /**
  * HEAD (or a base ref's merge base) against the working tree: staged and
@@ -84,14 +106,14 @@ export const mergeBase = async (repo, base) => {
  * @returns {Promise<string>}
  */
 export const diffWorking = async (repo, base) => {
-  if (base !== undefined) return git(repo, ['diff', await mergeBase(repo, base), ...DIFF_FLAGS]);
+  if (base !== undefined) return git(repo, [...QUOTEPATH_OFF, 'diff', await mergeBase(repo, base), ...DIFF_FLAGS]);
   try {
     await git(repo, ['rev-parse', '--verify', 'HEAD']);
   } catch {
     // An unborn HEAD has nothing to diff against, so use the empty tree.
-    return git(repo, ['diff', EMPTY_TREE, ...DIFF_FLAGS]);
+    return git(repo, [...QUOTEPATH_OFF, 'diff', EMPTY_TREE, ...DIFF_FLAGS]);
   }
-  return git(repo, ['diff', 'HEAD', ...DIFF_FLAGS]);
+  return git(repo, [...QUOTEPATH_OFF, 'diff', 'HEAD', ...DIFF_FLAGS]);
 };
 
 /** @param {string} repo @returns {Promise<string[]>} */

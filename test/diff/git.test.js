@@ -135,6 +135,15 @@ test('diffWorking against a base includes an uncommitted fix', async (t) => {
   assert.equal(/committed on the branch/.test(out), false, 'the intermediate commit is not the surface');
 });
 
+test('diffWorking does not C-escape an accented filename (core.quotePath disabled)', async (t) => {
+  const repo = await makeRepo({ 'café.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.write('café.js', 'two\n');
+
+  const out = await diffWorking(repo.dir);
+  assert.match(out, /diff --git a\/café\.js b\/café\.js/, 'the header must carry the real bytes, not a C-escaped, quoted path');
+});
+
 test('diffWorking with no base behaves exactly as before', async (t) => {
   const repo = await makeRepo({ 'a.js': 'one\n' });
   t.after(repo.cleanup);

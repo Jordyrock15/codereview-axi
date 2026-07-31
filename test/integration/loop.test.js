@@ -183,6 +183,55 @@ test('the repository is byte-identical after a full session', async (t) => {
   assert.deepEqual(after, before, 'cr must never write to the repository under review');
 });
 
+test('the repository is byte-identical after a --base session, a refresh, and the base branch disappearing mid-session', async (t) => {
+  const { cr, repo, env } = await setup(t);
+  await repo.run(['checkout', '-b', 'feature']);
+  await repo.write('a.js', 'one\ncommitted change\nthree\nfour\nfive\n');
+  await repo.run(['add', '-A']);
+  await repo.run(['commit', '-m', 'branch change']);
+
+  const before = {
+    status: await repo.run(['status', '--porcelain=v1', '-z']),
+    head: await repo.run(['rev-parse', 'HEAD']),
+    index: await repo.run(['diff', '--staged', '--stat']),
+    stash: await repo.run(['stash', 'list']),
+    reflog: await repo.run(['reflog', '--format=%H %gs']),
+  };
+
+  const opened = JSON.parse((await cr(['open', '--base', 'main'])).out);
+  assert.equal(opened.base, 'main');
+
+  const port = await portFor(env);
+  const token = await tokenFor(env, opened.key);
+
+  await post(port, opened.key, token, '/comments', {
+    scope: 'line', file: 'a.js', side: 'new', startLine: 2, endLine: 2,
+    quote: 'committed change', body: 'x', verdict: 'fix',
+  });
+  await post(port, opened.key, token, '/send');
+  await cr(['wait', '--timeout', '5']);
+  await cr(['refresh']);
+
+  // The base branch can vanish mid-session, e.g. once it is merged and
+  // deleted; refresh must fail legibly (see Critical 1) and still never touch
+  // the repository under review.
+  await repo.run(['branch', '-D', 'main']);
+  const refreshAfterDelete = await cr(['refresh']);
+  assert.equal(refreshAfterDelete.code, 1);
+
+  await cr(['close']);
+
+  const after = {
+    status: await repo.run(['status', '--porcelain=v1', '-z']),
+    head: await repo.run(['rev-parse', 'HEAD']),
+    index: await repo.run(['diff', '--staged', '--stat']),
+    stash: await repo.run(['stash', 'list']),
+    reflog: await repo.run(['reflog', '--format=%H %gs']),
+  };
+
+  assert.deepEqual(after, before, 'a --base session must never write to the repository under review, even once its base branch is gone');
+});
+
 test('a second agent waiting on the same session is refused', async (t) => {
   const { cr, env } = await setup(t);
   const opened = JSON.parse((await cr(['open'])).out);

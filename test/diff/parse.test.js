@@ -97,3 +97,51 @@ test('returns an empty array for an empty diff', () => {
   assert.deepEqual(parseUnifiedDiff(''), []);
   assert.deepEqual(parseUnifiedDiff('\n'), []);
 });
+
+// git's core.quotePath defaults on: a non-ASCII filename arrives C-escaped
+// and quoted, e.g. `"a/caf\303\251.js"` for café.js (0xC3 0xA9 is the UTF-8
+// encoding of é). The plain a/(.+) b/(.+) regex never matches that line.
+test('decodes a quoted diff --git header for an accented filename', () => {
+  const diff = [
+    'diff --git "a/caf\\303\\251.js" "b/caf\\303\\251.js"',
+    'index 0000000..1111111 100644',
+    '--- "a/caf\\303\\251.js"',
+    '+++ "b/caf\\303\\251.js"',
+    '@@ -0,0 +1 @@',
+    '+hello',
+    '',
+  ].join('\n');
+
+  const [file] = parseUnifiedDiff(diff);
+  assert.equal(file.path, 'café.js');
+  assert.equal(file.hunks[0].lines[0].text, 'hello');
+});
+
+test('decodes a quoted rename with an accented new name', () => {
+  const diff = [
+    'diff --git "a/old.js" "b/caf\\303\\251.js"',
+    'similarity index 100%',
+    'rename from old.js',
+    'rename to "caf\\303\\251.js"',
+    '',
+  ].join('\n');
+
+  const [file] = parseUnifiedDiff(diff);
+  assert.equal(file.status, 'renamed');
+  assert.equal(file.oldPath, 'old.js');
+  assert.equal(file.path, 'café.js');
+});
+
+test('drops a file whose quoted header cannot be decoded, rather than giving it an empty path', () => {
+  const diff = [
+    'diff --git "a/bad\\zzz.js" "b/bad\\zzz.js"',
+    'index 0000000..1111111 100644',
+    '--- "a/bad\\zzz.js"',
+    '+++ "b/bad\\zzz.js"',
+    '@@ -0,0 +1 @@',
+    '+hello',
+    '',
+  ].join('\n');
+
+  assert.deepEqual(parseUnifiedDiff(diff), []);
+});

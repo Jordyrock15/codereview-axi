@@ -6,6 +6,86 @@
 
 const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@ ?(.*)$/;
 
+const C_ESCAPES = {
+  '\\': 0x5c, '"': 0x22, n: 0x0a, t: 0x09, r: 0x0d, a: 0x07, b: 0x08, f: 0x0c, v: 0x0b,
+};
+
+/**
+ * core.quotePath only stops git quoting non-ASCII bytes; a literal quote,
+ * backslash or control character in a filename is always C-escaped and
+ * wrapped in double quotes, regardless of that setting.
+ * @param {string} quoted A string starting and ending with an unescaped `"`.
+ * @returns {string|null} The decoded path, or null when the escaping is malformed.
+ */
+const dequote = (quoted) => {
+  const inner = quoted.slice(1, -1);
+  /** @type {number[]} */
+  const bytes = [];
+  for (let i = 0; i < inner.length; i += 1) {
+    const ch = inner[i];
+    if (ch !== '\\') { bytes.push(ch.charCodeAt(0)); continue; }
+    i += 1;
+    const esc = inner[i];
+    if (esc === undefined) return null;
+    if (esc >= '0' && esc <= '7') {
+      const octal = inner.slice(i, i + 3);
+      if (!/^[0-7]{3}$/.test(octal)) return null;
+      bytes.push(parseInt(octal, 8));
+      i += 2;
+      continue;
+    }
+    if (!(esc in C_ESCAPES)) return null;
+    bytes.push(C_ESCAPES[/** @type {keyof typeof C_ESCAPES} */ (esc)]);
+  }
+  return Buffer.from(bytes).toString('utf8');
+};
+
+/**
+ * `rename from`/`rename to` are quoted independently of the `diff --git`
+ * line and by the same rule, so they need the same treatment.
+ * @param {string} raw
+ * @returns {string}
+ */
+const maybeDequote = (raw) => {
+  if (!raw.startsWith('"') || !raw.endsWith('"')) return raw;
+  return dequote(raw) ?? raw;
+};
+
+/**
+ * Reads one path token (quoted or not) off the front of a header remainder.
+ * @param {string} s
+ * @returns {{value: string, rest: string}|null}
+ */
+const readPathToken = (s) => {
+  if (s.startsWith('"')) {
+    let i = 1;
+    while (i < s.length && s[i] !== '"') i += s[i] === '\\' ? 2 : 1;
+    if (i >= s.length) return null;
+    const value = dequote(s.slice(0, i + 1));
+    return value === null ? null : { value, rest: s.slice(i + 1) };
+  }
+  const sp = s.indexOf(' ');
+  return sp === -1 ? { value: s, rest: '' } : { value: s.slice(0, sp), rest: s.slice(sp) };
+};
+
+/**
+ * @param {string} raw Everything after `diff --git `.
+ * @returns {{a: string, b: string}|null}
+ */
+const parseGitPaths = (raw) => {
+  // The common, unquoted case first: greedy matching is what lets an
+  // unquoted path containing a literal space parse correctly.
+  const simple = raw.match(/^a\/(.+) b\/(.+)$/);
+  if (simple) return { a: simple[1], b: simple[2] };
+
+  const first = readPathToken(raw);
+  if (first === null || !first.value.startsWith('a/')) return null;
+  const second = readPathToken(first.rest.replace(/^ /, ''));
+  if (second === null || !second.value.startsWith('b/')) return null;
+
+  return { a: first.value.slice(2), b: second.value.slice(2) };
+};
+
 /**
  * Parses git's unified diff output.
  * @param {string} text
@@ -25,9 +105,19 @@ export const parseUnifiedDiff = (text) => {
 
   for (const line of lines) {
     if (line.startsWith('diff --git ')) {
-      const paths = line.slice('diff --git '.length).match(/^a\/(.+) b\/(.+)$/);
+      const paths = parseGitPaths(line.slice('diff --git '.length));
+      if (paths === null) {
+        // A path git felt it had to quote for reasons other than non-ASCII
+        // bytes (a literal quote, backslash or newline) but that this parser
+        // cannot decode: better to drop the entry than hand back an empty
+        // path, which would render as a blank row and collide with any other.
+        console.error(`cr: could not parse a file path from "${line}", skipping it`);
+        file = null;
+        hunk = null;
+        continue;
+      }
       file = {
-        path: paths ? paths[2] : '',
+        path: paths.b,
         oldPath: null,
         status: 'modified',
         binary: false,
@@ -42,12 +132,12 @@ export const parseUnifiedDiff = (text) => {
     if (!file) continue;
 
     if (line.startsWith('rename from ')) {
-      file.oldPath = line.slice('rename from '.length);
+      file.oldPath = maybeDequote(line.slice('rename from '.length));
       file.status = 'renamed';
       continue;
     }
     if (line.startsWith('rename to ')) {
-      file.path = line.slice('rename to '.length);
+      file.path = maybeDequote(line.slice('rename to '.length));
       continue;
     }
     if (line.startsWith('new file mode')) {

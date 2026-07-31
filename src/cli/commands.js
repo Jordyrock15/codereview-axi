@@ -49,14 +49,28 @@ const unwrap = (res) => {
  * @typedef {(number: number|string, options?: {run?: (args: string[], cwd?: string) => Promise<string>, cwd?: string}) => Promise<{base: string, head: string}>} ResolvePr
  */
 
+/**
+ * POSIX single-quoting: wrap in single quotes, and for each embedded single
+ * quote, close the string, insert an escaped one, then reopen it. This is
+ * what makes the branch-mismatch suggestion below safe to paste even when
+ * the PR head branch (untrusted: it comes from whoever opened the PR) is
+ * built to look like a shell command.
+ * @param {string} s
+ * @returns {string}
+ */
+export const shQuote = (s) => `'${s.replace(/'/g, "'\\''")}'`;
+
 /** @type {Record<string, (input: {flags: Record<string, string|boolean>, cwd: string, port: number, resolvePr: ResolvePr}) => Promise<unknown>>} */
 const HANDLERS = {
   open: async ({ flags, cwd, port, resolvePr }) => {
     const root = await toplevel(cwd);
     if (root === null) throw new CliError(1, `${cwd} is not inside a git worktree`);
 
-    if (flags.pr !== undefined && typeof flags.base === 'string') {
+    if (flags.pr !== undefined && flags.base !== undefined) {
       throw new CliError(1, '--pr and --base cannot be combined, the pull request determines the base');
+    }
+    if (flags.base !== undefined && (typeof flags.base !== 'string' || flags.base === '')) {
+      throw new CliError(1, '--base needs a value, for example --base main');
     }
 
     /** @type {{repo: string, note: string, base?: string, pr?: number}} */
@@ -79,7 +93,8 @@ const HANDLERS = {
 
       const branch = await currentBranch(root);
       if (branch !== resolved.head) {
-        throw new CliError(1, `PR ${n} reviews ${resolved.head}, but the current branch is ${branch}. Run: git fetch origin ${resolved.head} && git checkout ${resolved.head}`);
+        const head = shQuote(resolved.head);
+        throw new CliError(1, `PR ${n} reviews ${resolved.head}, but the current branch is ${branch}. Run: git fetch origin ${head} && git checkout ${head}`);
       }
 
       body.base = resolved.base;

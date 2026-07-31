@@ -141,3 +141,32 @@ test('returns an empty snapshot for a clean tree', async (t) => {
   assert.deepEqual(snapshot.files, []);
   assert.equal(snapshot.totals.files, 0);
 });
+
+// core.quotePath defaults on, so this is git's ordinary behaviour, not a
+// contrived encoding: a real accented filename must show up under its real
+// name end to end, and be readable, not turn into a blank row nobody can open.
+test('a modified file with an accented name appears in the snapshot under its real name', async (t) => {
+  const repo = await makeRepo({ 'café.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.write('café.js', 'two\n');
+
+  const snapshot = await buildSnapshot(repo.dir);
+  const file = find(snapshot, 'café.js');
+
+  assert.ok(file, 'the accented filename must be the real path in the snapshot, not an empty one');
+  assert.equal(snapshot.files.length, 1, 'it must not additionally collide with an empty-path entry');
+  assert.ok(file.hunks[0].lines.some((/** @type {{kind: string, text: string}} */ l) => l.kind === 'add' && l.text === 'two'));
+});
+
+test('a new untracked file with an accented name is readable through the same path the snapshot reports', async (t) => {
+  const { readWorkingFile } = await import('../../src/diff/git.js');
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.write('café.js', 'fresh\n');
+
+  const snapshot = await buildSnapshot(repo.dir);
+  const file = find(snapshot, 'café.js');
+
+  assert.ok(file, 'an untracked accented filename must appear under its real name');
+  assert.equal(await readWorkingFile(repo.dir, file.path), 'fresh\n');
+});

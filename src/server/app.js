@@ -2,7 +2,7 @@ import { toplevel } from '../diff/git.js';
 import { buildSnapshot } from '../diff/snapshot.js';
 import { mutateState, loadState } from '../state/store.js';
 import {
-  openOrReuse, closeSession, reapSessions, sessionKey,
+  openOrReuse, closeSession, reapSessions, sessionKey, assertNoBaseConflict,
 } from '../state/sessions.js';
 import { reanchor } from '../state/anchor.js';
 import { StateError } from '../state/errors.js';
@@ -18,6 +18,24 @@ import { shellHtml, assetResponse } from './ui.js';
  * @typedef {import('../types.js').Session} Session
  * @typedef {import('../types.js').SnapshotFile} SnapshotFile
  */
+
+/**
+ * `mergeBase` (via `buildSnapshot`) discriminates a missing ref from unrelated
+ * histories and tags each with a `crReason`; without this the route mapped
+ * both, along with everything else, to a bare 500 internal error.
+ * @param {unknown} err
+ * @param {string|undefined} base
+ * @returns {unknown} A `StateError` when the failure is base-related, the original error otherwise.
+ */
+const translateBaseFailure = (err, base) => {
+  if (base === undefined || !(err instanceof Error)) return err;
+  const reason = /** @type {any} */ (err).crReason;
+  if (reason === 'missing-ref') {
+    return new StateError(400, `${err.message}. For a pull request this usually means the base branch has not been fetched, try git fetch origin ${base}.`);
+  }
+  if (reason === 'unrelated-history') return new StateError(400, err.message);
+  return err;
+};
 
 /**
  * Metadata only. Hunks stay out of the agent's context.
@@ -140,25 +158,33 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
           throw new StateError(400, 'a PR session needs a base as well, none was given');
         }
         const at = now();
+        const key = sessionKey(root);
 
-        // A base (or pr) conflict is a state-layer refusal, independent of what
-        // the requested base's diff contains, so it must be checked before an
-        // empty diff for that base gets the chance to 422 first.
-        const { session, reused, snapshot } = await mutateState(async (state) => {
+        // A conflict must win over an empty-diff 422, so it is checked here,
+        // before the snapshot is built, on a throwaway state copy (never
+        // persisted; the mutating pass below reaps and rechecks the real
+        // state, so a race here just costs a wasted snapshot, not a bad open).
+        const preState = await loadState();
+        reapSessions(preState, at);
+        assertNoBaseConflict(preState.sessions[key], base, pr);
+
+        let built;
+        try {
+          built = await buildSnapshot(root, base);
+        } catch (err) {
+          throw translateBaseFailure(err, base);
+        }
+        if (built.files.length === 0) {
+          throw new StateError(422, base !== undefined
+            ? `nothing to review, the branch has no changes against ${base}`
+            : 'nothing to review, the working tree is clean');
+        }
+
+        // Building the snapshot is real git work (a diff, a merge-base, every
+        // untracked file read); running it inside mutateState would serialise
+        // it behind every other route, including the long poll's drain.
+        const { session, reused, snapshot } = await mutateState((state) => {
           reapSessions(state, at);
-
-          const key = sessionKey(root);
-          const existing = state.sessions[key];
-          if (existing && existing.status === 'open' && base !== undefined && base !== existing.base) {
-            throw new StateError(409, `session is already open with base ${existing.base ?? 'the working tree'}, cannot switch to ${base}`);
-          }
-          if (existing && existing.status === 'open' && pr !== undefined && pr !== existing.pr) {
-            const incumbent = existing.pr != null ? `PR ${existing.pr}` : `base ${existing.base ?? 'the working tree'}`;
-            throw new StateError(409, `session is already open with ${incumbent}, cannot switch to PR ${pr}`);
-          }
-
-          const built = await buildSnapshot(root, base);
-          if (built.files.length === 0) throw new StateError(422, 'nothing to review, the working tree is clean');
 
           const result = openOrReuse(state, {
             repo: root, note: String(body?.note ?? ''), snapshot: built, port, now: at, base, pr,
@@ -199,7 +225,13 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
       pattern: '/api/sessions/:key/refresh',
       handler: async (ctx) => {
         const session = requireOpen(await guarded(ctx));
-        const snapshot = await buildSnapshot(session.repo, session.base ?? undefined);
+        const base = session.base ?? undefined;
+        let snapshot;
+        try {
+          snapshot = await buildSnapshot(session.repo, base);
+        } catch (err) {
+          throw translateBaseFailure(err, base);
+        }
         const at = now();
 
         const result = await mutateState((state) => {

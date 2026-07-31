@@ -63,6 +63,69 @@ test('open --base main prints a diff containing the branch commit, unlike a bare
   assert.deepEqual(json.files.map((/** @type {{path: string}} */ f) => f.path), ['a.js']);
 });
 
+test('open --base with a ref that does not exist exits 1 with a legible message, not internal error', async (t) => {
+  const { cr } = await setup(t);
+  const result = await cr(['open', '--base', 'no-such-ref']);
+  assert.equal(result.code, 1);
+  assert.match(result.out, /no-such-ref/);
+  assert.doesNotMatch(result.out, /internal error/);
+});
+
+test('open --base against unrelated histories exits 1 naming the real cause, not internal error', async (t) => {
+  const { cr, repo } = await setup(t);
+  await repo.run(['checkout', '-q', '--orphan', 'unrelated']);
+  await repo.run(['rm', '-rf', '.']);
+  await repo.write('b.js', 'other\n');
+  await repo.run(['add', '-A']);
+  await repo.run(['commit', '-qm', 'unrelated root']);
+
+  const result = await cr(['open', '--base', 'main']);
+  assert.equal(result.code, 1);
+  assert.match(result.out, /common history/);
+  assert.doesNotMatch(result.out, /internal error/);
+});
+
+test('refresh on a session whose base branch has since been deleted exits 1 with a legible message', async (t) => {
+  const { cr, repo } = await setup(t);
+  await repo.run(['checkout', '-q', '-b', 'feature']);
+  await repo.write('a.js', 'branch change\ntwo\nthree\n');
+  await repo.run(['add', '-A']);
+  await repo.run(['commit', '-qm', 'feature change']);
+
+  const opened = await cr(['open', '--base', 'main']);
+  assert.equal(opened.code, 0);
+
+  await repo.run(['branch', '-D', 'main']);
+  const result = await cr(['refresh']);
+  assert.equal(result.code, 1);
+  assert.match(result.out, /main/);
+  assert.doesNotMatch(result.out, /internal error/);
+});
+
+test('open --base with no value is a usage error, not a silent working-diff session', async (t) => {
+  const { run, repo } = await setup(t);
+  const result = await run({ argv: ['open', '--base', '--no-browser'], cwd: repo.dir });
+  assert.equal(result.code, 1);
+  assert.match(result.out, /--base/);
+});
+
+test('open --base= (an empty value) is a usage error', async (t) => {
+  const { run, repo } = await setup(t);
+  const result = await run({ argv: ['open', '--base=', '--no-browser'], cwd: repo.dir });
+  assert.equal(result.code, 1);
+  assert.match(result.out, /--base/);
+});
+
+test('open --pr N --base with no value is still refused as a combination error, not swallowed by base validation', async (t) => {
+  const { run, repo } = await setup(t);
+  const resolvePr = async () => { throw new Error('resolvePr must not be called when --pr and --base conflict'); };
+  const result = await run({
+    argv: ['open', '--pr', '5', '--base', '--no-browser'], cwd: repo.dir, resolvePr,
+  });
+  assert.equal(result.code, 1);
+  assert.match(result.out, /--pr and --base cannot be combined/);
+});
+
 test('open --pr with --base is a usage error and never resolves the PR', async (t) => {
   const { run, repo } = await setup(t);
   const resolvePr = async () => { throw new Error('resolvePr must not be called when --pr and --base conflict'); };
@@ -101,6 +164,8 @@ test('open --pr refuses when the current branch is not the PR head, and touches 
   const before = {
     status: await repo.run(['status', '--porcelain']),
     head: await repo.run(['rev-parse', 'HEAD']),
+    index: await repo.run(['diff', '--staged', '--stat']),
+    stash: await repo.run(['stash', 'list']),
     reflog: await repo.run(['reflog']),
   };
 
@@ -109,11 +174,15 @@ test('open --pr refuses when the current branch is not the PR head, and touches 
 
   assert.equal(result.code, 1);
   assert.match(result.out, /feature-x/);
-  assert.match(result.out, /git fetch origin feature-x && git checkout feature-x/);
+  // Single-quoted even for a plain name: the suggestion must be safe to paste
+  // regardless of what the PR head branch turns out to contain.
+  assert.match(result.out, /git fetch origin 'feature-x' && git checkout 'feature-x'/);
 
   const after = {
     status: await repo.run(['status', '--porcelain']),
     head: await repo.run(['rev-parse', 'HEAD']),
+    index: await repo.run(['diff', '--staged', '--stat']),
+    stash: await repo.run(['stash', 'list']),
     reflog: await repo.run(['reflog']),
   };
   assert.deepEqual(after, before, '--pr must never fetch or check out');

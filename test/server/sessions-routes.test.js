@@ -53,6 +53,66 @@ test('POST /api/sessions with a base stores it and reports it', async (t) => {
   assert.equal(state.base, 'main');
 });
 
+test('POST /api/sessions with a base that does not exist gives a legible 400, not a bare internal error', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+
+  const { call } = await startApp(t);
+  const res = await call('POST', '/api/sessions', { repo: repo.dir, note: '', base: 'no-such-ref' });
+
+  assert.equal(res.status, 400);
+  assert.match(res.json.error, /no-such-ref/);
+  assert.match(res.json.error, /fetch/i, 'a missing ref is the ordinary --pr failure: hint at fetching the base branch');
+});
+
+test('POST /api/sessions with an unrelated-history base gives its own 400, distinct from a missing ref', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.run(['checkout', '-q', '--orphan', 'unrelated']);
+  await repo.write('b.js', 'other\n');
+  await repo.run(['add', '-A']);
+  await repo.run(['commit', '-qm', 'unrelated root']);
+
+  const { call } = await startApp(t);
+  const res = await call('POST', '/api/sessions', { repo: repo.dir, note: '', base: 'main' });
+
+  assert.equal(res.status, 400);
+  assert.match(res.json.error, /common history/);
+  assert.doesNotMatch(res.json.error, /fetch/i, 'unrelated histories are not a fetch problem');
+});
+
+test('a base session with no divergence says the branch has no changes, not that the working tree is clean', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.run(['checkout', '-q', '-b', 'feature']);
+
+  const { call } = await startApp(t);
+  const res = await call('POST', '/api/sessions', { repo: repo.dir, note: '', base: 'main' });
+
+  assert.equal(res.status, 422);
+  assert.match(res.json.error, /has no changes against main/);
+  assert.doesNotMatch(res.json.error, /working tree is clean/);
+});
+
+test('refresh on a session whose base branch has since been deleted gives a legible 400', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.run(['checkout', '-q', '-b', 'feature']);
+  await repo.write('a.js', 'two\n');
+  await repo.run(['add', '-A']);
+  await repo.run(['commit', '-qm', 'feature change']);
+
+  const { call } = await startApp(t);
+  const { key, token } = (await call('POST', '/api/sessions', { repo: repo.dir, note: 'n', base: 'main' })).json;
+
+  await repo.run(['branch', '-D', 'main']);
+  const res = await call('POST', `/api/sessions/${key}/refresh?t=${token}`);
+
+  assert.equal(res.status, 400);
+  assert.match(res.json.error, /main/);
+  assert.match(res.json.error, /fetch/i);
+});
+
 test('POST /api/sessions with a pr stores it alongside the base', async (t) => {
   const repo = await makeRepo({ 'a.js': 'one\n' });
   t.after(repo.cleanup);
@@ -497,4 +557,38 @@ test('PATCH view on a closed session is refused', async (t) => {
 
   const res = await call('PATCH', `/api/sessions/${key}/view?t=${token}`, { view: 'split' });
   assert.equal(res.status, 409);
+});
+
+test('a slow session create does not hold up an unrelated route behind the state mutex', async (t) => {
+  const { call } = await startApp(t);
+
+  // buildSnapshot does real work per untracked file (a stat, a readFile, a
+  // binary sniff), all awaited in sequence; enough of them make it slow
+  // enough to measure against. Before the fix this ran inside mutateState's
+  // serialising queue, so nothing else could be served until it finished.
+  const slow = await makeRepo({ 'seed.js': 'one\n' });
+  t.after(slow.cleanup);
+  for (let i = 0; i < 800; i += 1) await slow.write(`untracked-${i}.js`, `file number ${i}\n`);
+
+  const other = await makeRepo({ 'a.js': 'one\n' });
+  t.after(other.cleanup);
+  await other.write('a.js', 'two\n');
+  const opened = (await call('POST', '/api/sessions', { repo: other.dir, note: 'n' })).json;
+
+  /** @type {string[]} */
+  const order = [];
+  const slowCreate = call('POST', '/api/sessions', { repo: slow.dir, note: 'n' })
+    .then((res) => { order.push('slow-create'); return res; });
+
+  // Give the slow create a head start comfortably past toplevel()'s own git
+  // spawn (a few ms) and into buildSnapshot itself, so a serialised queue
+  // would make quick-close wait behind the whole snapshot, not just the spawn.
+  await new Promise((resolve) => { setTimeout(resolve, 60); });
+  const quickClose = call('POST', `/api/sessions/${opened.key}/close?t=${opened.token}`, { closedBy: 'agent' })
+    .then((res) => { order.push('quick-close'); return res; });
+
+  const [slowRes, closeRes] = await Promise.all([slowCreate, quickClose]);
+  assert.equal(slowRes.status, 201);
+  assert.equal(closeRes.status, 200);
+  assert.deepEqual(order, ['quick-close', 'slow-create'], 'closing a different session must not wait behind a slow snapshot build');
 });

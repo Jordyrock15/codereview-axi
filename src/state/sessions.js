@@ -31,6 +31,27 @@ export const mintToken = () => randomBytes(32).toString('hex');
 export const sessionUrl = (key, token, port) => `http://127.0.0.1:${port}/session/${key}?t=${token}`;
 
 /**
+ * Comments are anchored to a review surface; swapping the base or PR under
+ * them would leave them pointing at a different comparison. Exported so a
+ * route can run the same check before doing the work of building a snapshot,
+ * without risking drift from the authoritative check `openOrReuse` runs.
+ * @param {Session|null|undefined} existing
+ * @param {string} [base]
+ * @param {number|null} [pr]
+ * @returns {void}
+ */
+export const assertNoBaseConflict = (existing, base, pr) => {
+  if (!existing || existing.status !== 'open') return;
+  if (base !== undefined && base !== existing.base) {
+    throw new StateError(409, `session is already open with base ${existing.base ?? 'the working tree'}, cannot switch to ${base}`);
+  }
+  if (pr !== undefined && pr !== existing.pr) {
+    const incumbent = existing.pr != null ? `PR ${existing.pr}` : `base ${existing.base ?? 'the working tree'}`;
+    throw new StateError(409, `session is already open with ${incumbent}, cannot switch to PR ${pr}`);
+  }
+};
+
+/**
  * @param {State} state
  * @param {{repo: string, note: string, snapshot: Snapshot, port: number, now: number, base?: string, pr?: number|null}} input
  * @returns {{session: Session, reused: boolean}}
@@ -41,17 +62,9 @@ export const openOrReuse = (state, {
   const key = sessionKey(repo);
   const at = new Date(now).toISOString();
   const existing = state.sessions[key];
+  assertNoBaseConflict(existing, base, pr);
 
   if (existing && existing.status === 'open') {
-    // Comments are anchored to a review surface; swapping the base under them
-    // would leave them pointing at a different comparison.
-    if (base !== undefined && base !== existing.base) {
-      throw new StateError(409, `session is already open with base ${existing.base ?? 'the working tree'}, cannot switch to ${base}`);
-    }
-    if (pr !== undefined && pr !== existing.pr) {
-      const incumbent = existing.pr != null ? `PR ${existing.pr}` : `base ${existing.base ?? 'the working tree'}`;
-      throw new StateError(409, `session is already open with ${incumbent}, cannot switch to PR ${pr}`);
-    }
     // Sessions created before `pr` existed are pr-less in memory; normalise
     // to the number|null contract without disturbing the reopen rules above.
     existing.pr ??= pr ?? null;
