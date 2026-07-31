@@ -72,6 +72,31 @@ export const presentComment = (comment, fields, { limit = TRUNCATE_AT } = {}) =>
 };
 
 /**
+ * Concrete next commands for the agent, with real ids filled in. Templates,
+ * not prose: the caller pastes these, so anything unrunnable is worse than nothing.
+ * @param {string} verb
+ * @param {Record<string, any>} payload
+ * @returns {string[]}
+ */
+export const nextSteps = (verb, payload) => {
+  const first = Array.isArray(payload.comments) ? payload.comments[0] : undefined;
+  // first.id is only there to quote back: if --fields dropped it, a reply
+  // template naming "undefined" would be worse than no suggestion at all.
+  if (first !== undefined && first.id !== undefined) {
+    return [
+      `cr reply --id ${first.id} --status fixed --body "..."`,
+      'cr list --status open',
+    ];
+  }
+  if (first !== undefined) return ['cr list --fields id,body,quote', 'cr list --status open'];
+  if (payload.empty !== undefined) return ['cr list', 'cr wait'];
+  if (verb === 'open' || verb === 'refresh') return ['cr wait'];
+  if (verb === 'wait') return ['cr wait', 'cr close'];
+  if (verb === 'reply') return ['cr wait'];
+  return ['cr open'];
+};
+
+/**
  * @param {string|undefined} requested
  * @returns {string[]}
  */

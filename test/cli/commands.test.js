@@ -668,3 +668,27 @@ test('an empty result with no comments at all still states so, never bare output
   assert.match(result.out, /no comments \(0 of 0\)/);
   assert.equal(/comments: \[\]/.test(result.out), false, 'an empty array is not a definitive empty state');
 });
+
+test('help[] lines are appended by default and suppressed by --no-help', async (t) => {
+  await isolateHome(t);
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.write('a.js', 'two\n');
+
+  const withHelp = await run({ argv: ['open', '--no-browser'], cwd: repo.dir });
+  assert.match(withHelp.out, /^help\[\d+\]: /m);
+
+  const without = await run({ argv: ['open', '--no-browser', '--no-help'], cwd: repo.dir });
+  assert.equal(/^help\[/m.test(without.out), false);
+});
+
+test('--json output is parseable with help[] present', async (t) => {
+  await isolateHome(t);
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.write('a.js', 'two\n');
+
+  const result = await run({ argv: ['open', '--json', '--no-browser'], cwd: repo.dir });
+  const parsed = JSON.parse(result.out);
+  assert.equal(Array.isArray(parsed.help), true);
+});

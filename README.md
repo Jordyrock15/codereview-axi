@@ -45,6 +45,8 @@ run `cr <verb> --help` for a verb's flags
 
 every verb accepts --json to print JSON instead of TOON
 
+every verb appends help[] lines suggesting the next command; --no-help suppresses them
+
 --version prints the installed version and exits 0
 ```
 

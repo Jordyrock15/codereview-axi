@@ -10,7 +10,7 @@ import {
   USAGE, verbHelp, unknownFlags, checkArity, booleanFlagNames,
 } from './spec.js';
 import { encode } from './toon.js';
-import { presentComment, selectFields } from './present.js';
+import { presentComment, selectFields, nextSteps } from './present.js';
 
 export { USAGE } from './spec.js';
 
@@ -302,7 +302,11 @@ export const run = async ({ argv, cwd, resolvePr = defaultResolvePr }) => {
     const result = await handler({
       flags, cwd, port, resolvePr,
     });
-    return { code: 0, out: asText(forDisplay(result)) };
+    const payload = /** @type {Record<string, unknown>} */ (forDisplay(result));
+    const withHelp = flags['no-help'] === true
+      ? payload
+      : { ...payload, help: nextSteps(verb, payload) };
+    return { code: 0, out: asText(withHelp) };
   } catch (err) {
     const code = err instanceof CliError ? err.code : 1;
     const slug = err instanceof CliError ? err.slug : 'error';

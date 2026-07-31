@@ -34,12 +34,12 @@ test('USAGE lists every verb', () => {
 });
 
 test('booleanFlagNames includes the universal flags plus the verb\'s own', () => {
-  assert.deepEqual([...booleanFlagNames('open')].sort(), ['help', 'json', 'no-browser', 'version'].sort());
-  assert.deepEqual([...booleanFlagNames('reply')].sort(), ['help', 'json', 'version'].sort());
+  assert.deepEqual([...booleanFlagNames('open')].sort(), ['help', 'json', 'no-browser', 'no-help', 'version'].sort());
+  assert.deepEqual([...booleanFlagNames('reply')].sort(), ['help', 'json', 'no-help', 'version'].sort());
 });
 
 test('booleanFlagNames with no verb gives just the universal set', () => {
-  assert.deepEqual([...booleanFlagNames()].sort(), ['help', 'json', 'version'].sort());
+  assert.deepEqual([...booleanFlagNames()].sort(), ['help', 'json', 'no-help', 'version'].sort());
 });
 
 test('checkArity accepts a boolean flag with no value or with true', () => {

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DEFAULT_COMMENT_FIELDS, AGENT_COMMENT_FIELDS, presentComment, selectFields, TRUNCATE_AT, truncate,
+  DEFAULT_COMMENT_FIELDS, AGENT_COMMENT_FIELDS, presentComment, selectFields, TRUNCATE_AT, truncate, nextSteps,
 } from '../../src/cli/present.js';
 import { encode } from '../../src/cli/toon.js';
 
@@ -108,4 +108,33 @@ test('a limit that lands mid-surrogate-pair steps back rather than severing it',
   assert.doesNotThrow(() => encode({ body: out }));
   assert.equal(out.length < body.length, true, 'the result must be shorter than the input');
   assert.match(out, /\(truncated, 100 chars total, use --full to see complete body\)$/);
+});
+
+test('after comments arrive, the next step is a reply template with a real id', () => {
+  const steps = nextSteps('wait', { comments: [{ id: 7 }, { id: 8 }] });
+  assert.equal(steps.some((s) => s.includes('cr reply --id 7')), true);
+});
+
+test('after open, the next step is to wait', () => {
+  assert.equal(nextSteps('open', { key: 'abc' }).some((s) => s.includes('cr wait')), true);
+});
+
+test('an empty result suggests widening rather than replying', () => {
+  const steps = nextSteps('list', { empty: 'no comments (0 of 4 match status=answered)' });
+  assert.equal(steps.some((s) => s.includes('cr list')), true);
+  assert.equal(steps.some((s) => s.includes('cr reply')), false);
+});
+
+test('nextSteps returns command templates, never prose', () => {
+  for (const verb of ['open', 'wait', 'list', 'reply', 'refresh', 'close']) {
+    for (const s of nextSteps(verb, { comments: [{ id: 1 }] })) {
+      assert.match(s, /^cr /, `"${s}" must be a runnable command`);
+    }
+  }
+});
+
+test('a --fields selection that drops id never produces an "undefined" reply template', () => {
+  const steps = nextSteps('wait', { comments: [{ body: 'x', quote: 'y' }] });
+  assert.equal(steps.some((s) => s.includes('undefined')), false);
+  for (const s of steps) assert.match(s, /^cr /);
 });

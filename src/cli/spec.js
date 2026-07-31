@@ -47,10 +47,10 @@ export const VERBS = {
 };
 
 /**
- * Accepted everywhere, so no verb has to declare them. All three are boolean:
+ * Accepted everywhere, so no verb has to declare them. All four are boolean:
  * none takes a value.
  */
-export const UNIVERSAL = ['help', 'json', 'version'];
+export const UNIVERSAL = ['help', 'json', 'version', 'no-help'];
 
 /**
  * @param {string} verb
@@ -117,6 +117,8 @@ export const USAGE = [
   'run `cr <verb> --help` for a verb\'s flags',
   '',
   'every verb accepts --json to print JSON instead of TOON',
+  '',
+  'every verb appends help[] lines suggesting the next command; --no-help suppresses them',
   '',
   '--version prints the installed version and exits 0',
   '',
