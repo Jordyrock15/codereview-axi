@@ -34,6 +34,66 @@ test('POST /api/sessions 422s a clean tree so the CLI can exit 2', async (t) => 
   assert.match(res.json.error, /nothing to review/);
 });
 
+test('POST /api/sessions with a base stores it and reports it', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.run(['checkout', '-b', 'feature']);
+  await repo.write('a.js', 'two\n');
+  await repo.run(['add', '-A']);
+  await repo.run(['commit', '-m', 'feature change']);
+
+  const { call } = await startApp(t);
+  const res = await call('POST', '/api/sessions', { repo: repo.dir, note: 'n', base: 'main' });
+
+  assert.equal(res.status, 201);
+  assert.equal(res.json.base, 'main');
+  assert.deepEqual(res.json.files.map((/** @type {{path: string}} */ f) => f.path), ['a.js']);
+
+  const state = (await call('GET', `/api/sessions/${res.json.key}?t=${res.json.token}`)).json;
+  assert.equal(state.base, 'main');
+});
+
+test('refresh with a stored base recomputes against the same merge base after a further commit', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.run(['checkout', '-b', 'feature']);
+  await repo.write('a.js', 'two\n');
+  await repo.run(['add', '-A']);
+  await repo.run(['commit', '-m', 'feature change']);
+
+  const { call } = await startApp(t);
+  const { key, token } = (await call('POST', '/api/sessions', { repo: repo.dir, note: 'n', base: 'main' })).json;
+
+  await repo.write('b.js', 'new file\n');
+
+  const res = await call('POST', `/api/sessions/${key}/refresh?t=${token}`);
+  assert.equal(res.status, 200);
+
+  const state = (await call('GET', `/api/sessions/${key}?t=${token}`)).json;
+  const paths = state.snapshot.files.map((/** @type {{path: string}} */ f) => f.path);
+  assert.ok(paths.includes('a.js'), 'the committed change against the base must still be visible');
+  assert.ok(paths.includes('b.js'), 'the new untracked change must also be visible');
+});
+
+test('a base conflict is refused with 409 even when the new base itself has nothing to review', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.run(['checkout', '-b', 'feature']);
+  await repo.write('a.js', 'two\n');
+  await repo.run(['add', '-A']);
+  await repo.run(['commit', '-m', 'feature change']);
+  await repo.run(['checkout', '-b', 'develop']);
+
+  const { call } = await startApp(t);
+  await call('POST', '/api/sessions', { repo: repo.dir, note: 'n', base: 'main' });
+
+  // develop is HEAD itself here, so a plain diff against it would be empty;
+  // the base conflict must still win over a would-be 422.
+  const res = await call('POST', '/api/sessions', { repo: repo.dir, note: 'n', base: 'develop' });
+  assert.equal(res.status, 409);
+  assert.match(res.json.error, /base/);
+});
+
 test('POST /api/sessions 400s a path that is not a git worktree', async (t) => {
   const { call } = await startApp(t);
   const res = await call('POST', '/api/sessions', { repo: '/', note: '' });

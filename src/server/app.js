@@ -1,7 +1,9 @@
 import { toplevel } from '../diff/git.js';
 import { buildSnapshot } from '../diff/snapshot.js';
 import { mutateState, loadState } from '../state/store.js';
-import { openOrReuse, closeSession, reapSessions } from '../state/sessions.js';
+import {
+  openOrReuse, closeSession, reapSessions, sessionKey,
+} from '../state/sessions.js';
 import { reanchor } from '../state/anchor.js';
 import { StateError } from '../state/errors.js';
 import { guard, checkOrigin } from './security.js';
@@ -132,18 +134,32 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
         const root = await toplevel(requested);
         if (root === null) throw new StateError(400, `${requested} is not inside a git worktree`);
 
-        const snapshot = await buildSnapshot(root);
-        if (snapshot.files.length === 0) throw new StateError(422, 'nothing to review, the working tree is clean');
-
+        const base = typeof body?.base === 'string' ? body.base : undefined;
         const at = now();
-        const { session, reused } = await mutateState((state) => {
+
+        // A base conflict is a state-layer refusal, independent of what the
+        // requested base's diff contains, so it must be checked before an
+        // empty diff for that base gets the chance to 422 first.
+        const { session, reused, snapshot } = await mutateState(async (state) => {
           reapSessions(state, at);
-          const result = openOrReuse(state, { repo: root, note: String(body?.note ?? ''), snapshot, port, now: at });
+
+          const key = sessionKey(root);
+          const existing = state.sessions[key];
+          if (existing && existing.status === 'open' && base !== undefined && base !== existing.base) {
+            throw new StateError(409, `session is already open with base ${existing.base ?? 'the working tree'}, cannot switch to ${base}`);
+          }
+
+          const built = await buildSnapshot(root, base);
+          if (built.files.length === 0) throw new StateError(422, 'nothing to review, the working tree is clean');
+
+          const result = openOrReuse(state, {
+            repo: root, note: String(body?.note ?? ''), snapshot: built, port, now: at, base,
+          });
           // A reused session's threads are anchored against the old snapshot;
           // without this a second `cr open` leaves them silently pointing at
           // whatever now occupies their old line numbers.
-          if (result.reused) reanchor(result.session, snapshot);
-          return result;
+          if (result.reused) reanchor(result.session, built);
+          return { ...result, snapshot: built };
         });
 
         return {
@@ -154,6 +170,7 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
             url: session.url,
             reused,
             note: session.note,
+            base: session.base,
             files: snapshot.files.map(fileMeta),
             totals: snapshot.totals,
             comments: session.comments.map(({ id, file, startLine, endLine, status, verdict: v }) => (
@@ -173,7 +190,7 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
       pattern: '/api/sessions/:key/refresh',
       handler: async (ctx) => {
         const session = requireOpen(await guarded(ctx));
-        const snapshot = await buildSnapshot(session.repo);
+        const snapshot = await buildSnapshot(session.repo, session.base ?? undefined);
         const at = now();
 
         const result = await mutateState((state) => {

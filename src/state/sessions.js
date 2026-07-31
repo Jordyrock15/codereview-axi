@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { StateError } from './errors.js';
 
 /**
  * @typedef {import('../types.js').Session} Session
@@ -31,15 +32,22 @@ export const sessionUrl = (key, token, port) => `http://127.0.0.1:${port}/sessio
 
 /**
  * @param {State} state
- * @param {{repo: string, note: string, snapshot: Snapshot, port: number, now: number}} input
+ * @param {{repo: string, note: string, snapshot: Snapshot, port: number, now: number, base?: string}} input
  * @returns {{session: Session, reused: boolean}}
  */
-export const openOrReuse = (state, { repo, note, snapshot, port, now }) => {
+export const openOrReuse = (state, {
+  repo, note, snapshot, port, now, base,
+}) => {
   const key = sessionKey(repo);
   const at = new Date(now).toISOString();
   const existing = state.sessions[key];
 
   if (existing && existing.status === 'open') {
+    // Comments are anchored to a review surface; swapping the base under them
+    // would leave them pointing at a different comparison.
+    if (base !== undefined && base !== existing.base) {
+      throw new StateError(409, `session is already open with base ${existing.base ?? 'the working tree'}, cannot switch to ${base}`);
+    }
     // A bare `cr open` sends no note; that must not wipe one set earlier.
     if (note !== '') existing.note = note;
     existing.snapshot = snapshot;
@@ -55,6 +63,7 @@ export const openOrReuse = (state, { repo, note, snapshot, port, now }) => {
     key,
     token,
     repo,
+    base: base ?? null,
     url: sessionUrl(key, token, port),
     status: 'open',
     closedBy: null,

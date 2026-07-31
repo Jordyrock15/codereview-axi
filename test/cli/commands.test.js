@@ -45,6 +45,24 @@ test('open prints session metadata as JSON and exits 0', async (t) => {
   assert.equal(json.files[0].hunks, undefined);
 });
 
+test('open --base main prints a diff containing the branch commit, unlike a bare open', async (t) => {
+  const { cr, repo } = await setup(t);
+  await repo.run(['checkout', '--', 'a.js']);
+  await repo.run(['checkout', '-b', 'feature']);
+  await repo.write('a.js', 'one\ncommitted change\nthree\n');
+  await repo.run(['add', '-A']);
+  await repo.run(['commit', '-m', 'branch change']);
+
+  const bare = await cr(['open']);
+  assert.equal(bare.code, 2, 'a bare open sees a clean tree relative to HEAD');
+
+  const withBase = await cr(['open', '--base', 'main']);
+  assert.equal(withBase.code, 0);
+  const json = JSON.parse(withBase.out);
+  assert.equal(json.base, 'main');
+  assert.deepEqual(json.files.map((/** @type {{path: string}} */ f) => f.path), ['a.js']);
+});
+
 test('open exits 2 on a clean tree', async (t) => {
   const { cr, repo } = await setup(t);
   await repo.run(['checkout', '--', 'a.js']);

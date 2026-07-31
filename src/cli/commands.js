@@ -8,7 +8,7 @@ import { sessionKey } from '../state/sessions.js';
 const USAGE = [
   'usage: cr <verb> [flags]',
   '',
-  '  open     [--note TEXT] [--no-browser]   start or resume a review of the working diff',
+  '  open     [--note TEXT] [--base REF] [--no-browser]   start or resume a review, against a base ref when given',
   '  wait     [--timeout 300] [--say TEXT]   block until the human sends comments',
   '  list     [--status open]                 print comments without blocking',
   '  reply    --id N --status S --body TEXT   answer one comment (fixed|explained|skipped)',
@@ -50,7 +50,9 @@ const HANDLERS = {
     const root = await toplevel(cwd);
     if (root === null) throw new CliError(1, `${cwd} is not inside a git worktree`);
 
+    /** @type {{repo: string, note: string, base?: string}} */
     const body = { repo: root, note: typeof flags.note === 'string' ? flags.note : '' };
+    if (typeof flags.base === 'string') body.base = flags.base;
     const created = unwrap(await request(port, 'POST', '/api/sessions', body));
 
     if (flags['no-browser'] !== true) await openUrl(created.url);

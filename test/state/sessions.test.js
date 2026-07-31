@@ -79,6 +79,45 @@ test('openOrReuse never resumes a closed session and mints a fresh token', () =>
   assert.notEqual(session.token, first.token);
 });
 
+test('openOrReuse records the base', () => {
+  /** @type {State} */
+  const state = { sessions: {} };
+  const { session } = open(state, { base: 'main' });
+  assert.equal(session.base, 'main');
+});
+
+test('a session with no base records null', () => {
+  /** @type {State} */
+  const state = { sessions: {} };
+  assert.equal(open(state).session.base, null);
+});
+
+test('reopening with no base keeps the stored one', () => {
+  /** @type {State} */
+  const state = { sessions: {} };
+  open(state, { base: 'main' });
+  assert.equal(open(state, { now: NOW + 10 }).session.base, 'main');
+});
+
+test('reopening with a different base is refused', () => {
+  /** @type {State} */
+  const state = { sessions: {} };
+  open(state, { base: 'main' });
+
+  assert.throws(() => open(state, { base: 'develop', now: NOW + 10 }), (err) => {
+    assert.equal(/** @type {any} */ (err).status, 409);
+    assert.match(/** @type {Error} */ (err).message, /base/);
+    return true;
+  });
+});
+
+test('reopening with the same base is fine', () => {
+  /** @type {State} */
+  const state = { sessions: {} };
+  open(state, { base: 'main' });
+  assert.equal(open(state, { base: 'main', now: NOW + 10 }).reused, true);
+});
+
 test('closeSession records who ended it', () => {
   /** @type {State} */
   const state = { sessions: {} };
