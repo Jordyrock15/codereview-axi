@@ -138,9 +138,12 @@ test('open --pr with --base is a usage error and never resolves the PR', async (
 
 test('open --pr rejects a non-integer PR number without invoking gh', async (t) => {
   const { run, repo } = await setup(t);
-  const result = await run({ argv: ['open', '--pr', 'abc', '--no-browser'], cwd: repo.dir });
+  const resolvePr = async () => { throw new Error('resolvePr must not be called when --pr is not a valid number'); };
+  const result = await run({
+    argv: ['open', '--pr', 'abc', '--no-browser'], cwd: repo.dir, resolvePr,
+  });
   assert.equal(result.code, 1);
-  assert.match(result.out, /number/);
+  assert.match(result.out, /--pr needs a positive whole number, got "abc"/);
 });
 
 test('open --pr with no value is a usage error without invoking gh', async (t) => {
@@ -148,7 +151,7 @@ test('open --pr with no value is a usage error without invoking gh', async (t) =
   const resolvePr = async () => { throw new Error('resolvePr must not be called when --pr has no value'); };
   const result = await run({ argv: ['open', '--pr', '--no-browser'], cwd: repo.dir, resolvePr });
   assert.equal(result.code, 1);
-  assert.match(result.out, /number/);
+  assert.match(result.out, /--pr needs a positive whole number, got true/);
 });
 
 test('open --pr exits 1 with a readable message when gh fails to resolve the PR', async (t) => {
@@ -157,6 +160,21 @@ test('open --pr exits 1 with a readable message when gh fails to resolve the PR'
   const result = await run({ argv: ['open', '--pr', '9', '--no-browser'], cwd: repo.dir, resolvePr });
   assert.equal(result.code, 1);
   assert.match(result.out, /not authenticated/);
+});
+
+test('open --pr on an unborn HEAD gives a legible message, not git\'s raw command-failed text', async (t) => {
+  const { run } = await setup(t);
+  const repo = await makeRepo();
+  t.after(repo.cleanup);
+
+  const resolvePr = async () => ({ base: 'main', head: 'feature-x' });
+  const result = await run({
+    argv: ['open', '--pr', '7', '--no-browser'], cwd: repo.dir, resolvePr,
+  });
+
+  assert.equal(result.code, 1);
+  assert.match(result.out, /could not determine the current branch/);
+  assert.doesNotMatch(result.out, /Command failed/);
 });
 
 test('open --pr refuses when the current branch is not the PR head, and touches no git state', async (t) => {

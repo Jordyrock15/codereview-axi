@@ -59,7 +59,7 @@ test('resolvePr rejects a response missing the fields', async () => {
 });
 
 test('resolvePr rejects a non-integer number', async () => {
-  await assert.rejects(() => resolvePr('abc', { run: fakeRun('{}') }), /number/);
+  await assert.rejects(() => resolvePr('abc', { run: fakeRun('{}') }), /--pr needs a positive whole number, got "abc"/);
 });
 
 test('resolvePr surfaces gh stderr for a non-ENOENT failure, e.g. not authenticated', async () => {

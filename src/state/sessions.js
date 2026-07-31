@@ -31,6 +31,17 @@ export const mintToken = () => randomBytes(32).toString('hex');
 export const sessionUrl = (key, token, port) => `http://127.0.0.1:${port}/session/${key}?t=${token}`;
 
 /**
+ * Names what a session is currently open against, for a conflict message:
+ * the PR when there is one (it is what the human recognises), otherwise the
+ * base, otherwise the working tree.
+ * @param {Session} existing
+ * @returns {string}
+ */
+const describeIncumbent = (existing) => (existing.pr != null
+  ? `PR ${existing.pr}`
+  : `base ${existing.base ?? 'the working tree'}`);
+
+/**
  * Comments are anchored to a review surface; swapping the base or PR under
  * them would leave them pointing at a different comparison. Exported so a
  * route can run the same check before doing the work of building a snapshot,
@@ -43,11 +54,10 @@ export const sessionUrl = (key, token, port) => `http://127.0.0.1:${port}/sessio
 export const assertNoBaseConflict = (existing, base, pr) => {
   if (!existing || existing.status !== 'open') return;
   if (base !== undefined && base !== existing.base) {
-    throw new StateError(409, `session is already open with base ${existing.base ?? 'the working tree'}, cannot switch to ${base}`);
+    throw new StateError(409, `session is already open with ${describeIncumbent(existing)}, cannot switch to ${base}`);
   }
   if (pr !== undefined && pr !== existing.pr) {
-    const incumbent = existing.pr != null ? `PR ${existing.pr}` : `base ${existing.base ?? 'the working tree'}`;
-    throw new StateError(409, `session is already open with ${incumbent}, cannot switch to PR ${pr}`);
+    throw new StateError(409, `session is already open with ${describeIncumbent(existing)}, cannot switch to PR ${pr}`);
   }
 };
 
@@ -65,8 +75,10 @@ export const openOrReuse = (state, {
   assertNoBaseConflict(existing, base, pr);
 
   if (existing && existing.status === 'open') {
-    // Sessions created before `pr` existed are pr-less in memory; normalise
-    // to the number|null contract without disturbing the reopen rules above.
+    // Sessions created before `base`/`pr` existed have no key in memory;
+    // normalise both to the string|null and number|null contracts without
+    // disturbing the reopen rules above.
+    existing.base ??= base ?? null;
     existing.pr ??= pr ?? null;
     // A bare `cr open` sends no note; that must not wipe one set earlier.
     if (note !== '') existing.note = note;

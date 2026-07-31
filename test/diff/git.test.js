@@ -222,7 +222,11 @@ test('an ordinary file in a repo under a symlinked root still reads', async (t) 
   const repo = await makeRepo({ 'a.js': 'one\n' });
   t.after(repo.cleanup);
 
-  assert.equal(await readWorkingFile(repo.dir, 'a.js'), 'one\n');
+  const linkedRoot = path.join(tmpdir(), `cr-root-link-${process.pid}`);
+  await symlink(repo.dir, linkedRoot);
+  t.after(() => rm(linkedRoot, { force: true }));
+
+  assert.equal(await readWorkingFile(linkedRoot, 'a.js'), 'one\n');
 });
 
 test('a path escaping with .. is refused', async (t) => {

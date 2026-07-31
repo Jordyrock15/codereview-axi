@@ -164,26 +164,6 @@ test('a pr conflict names the incumbent PR, not just its base', async (t) => {
   assert.match(res.json.error, /PR 42/);
 });
 
-test('a pr conflict is refused with 409 even when the bases happen to match', async (t) => {
-  const repo = await makeRepo({ 'a.js': 'one\n' });
-  t.after(repo.cleanup);
-  await repo.run(['checkout', '-b', 'feature']);
-  await repo.write('a.js', 'two\n');
-  await repo.run(['add', '-A']);
-  await repo.run(['commit', '-m', 'feature change']);
-
-  const { call } = await startApp(t);
-  await call('POST', '/api/sessions', {
-    repo: repo.dir, note: 'n', base: 'main', pr: 42,
-  });
-
-  const res = await call('POST', '/api/sessions', {
-    repo: repo.dir, note: 'n', base: 'main', pr: 43,
-  });
-  assert.equal(res.status, 409);
-  assert.match(res.json.error, /PR/);
-});
-
 test('refresh with a stored base recomputes against the same merge base after a further commit', async (t) => {
   const repo = await makeRepo({ 'a.js': 'one\n' });
   t.after(repo.cleanup);

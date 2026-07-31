@@ -1,7 +1,7 @@
 {
   "name": "codereview-axi",
   "version": "0.1.0",
-  "description": "Local browser review session over the git working diff, annotations fed back to your coding agent",
+  "description": "Local browser review session over a git diff, the working diff, a branch's base, or a pull request, annotations fed back to your coding agent",
   "type": "module",
   "bin": { "cr": "bin/cr.js" },
   "engines": { "node": ">=20" },

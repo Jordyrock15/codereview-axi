@@ -1,6 +1,6 @@
 # codereview-axi
 
-Reviewing an agent-written diff in a terminal loses the anchor between a comment and the code it is about: line numbers scroll past, context is gone by the time a reply arrives. `cr` opens a browser review session over your git working diff instead. A human reads the actual diff, highlights lines, and leaves a comment with intent (fix, explain, ignore); those comments feed straight back to the coding agent as JSON, and the agent replies and refreshes the diff in place.
+Reviewing an agent-written diff in a terminal loses the anchor between a comment and the code it is about: line numbers scroll past, context is gone by the time a reply arrives. `cr` opens a browser review session over a git diff instead: the working diff by default, or a branch against its base, or a pull request. A human reads the actual diff, highlights lines, and leaves a comment with intent (fix, explain, ignore); those comments feed straight back to the coding agent as JSON, and the agent replies and refreshes the diff in place.
 
 ## Install
 
@@ -34,13 +34,17 @@ cr close
 ```
 usage: cr <verb> [flags]
 
-  open     [--note TEXT] [--no-browser]   start or resume a review of the working diff
+  open     [--note TEXT] [--base REF | --pr N] [--no-browser]   start or resume a review, against a base ref or a pull request
   wait     [--timeout 300] [--say TEXT]   block until the human sends comments
   list     [--status open]                 print comments without blocking
   reply    --id N --status S --body TEXT   answer one comment (fixed|explained|skipped)
   refresh                                  recompute the diff and push it to the tab
   close                                    end the session
 ```
+
+By default `open` reviews the working diff (`git diff HEAD`). `--base <ref>` reviews the current branch against `git diff $(git merge-base <ref> HEAD)` instead, so independent work on the base branch since it diverged stays out of the diff. `--pr <number>` resolves a pull request's base and head branch through `gh` and reviews it the same way as `--base <baseRefName>` would, but only if the current branch is already the PR's head: if it is not, `cr` refuses and prints the `git fetch`/`git checkout` command to run rather than checking out the branch itself. `--pr` and `--base` cannot be combined. `refresh` recomputes against whichever surface the session was opened with, and reopening a session with a different base or PR is refused rather than silently swapped.
+
+`--pr` needs `gh` on `PATH`, authenticated against GitHub. Without it, `--pr` exits 1 with a message saying so; use `--base` instead if `gh` is unavailable.
 
 ## Exit codes
 
@@ -67,7 +71,8 @@ If the server dies mid-`wait`, `cr wait` exits 3 so the agent reports the failur
 - Each session gets a random per-session token, required on every API request either as an `x-cr-token` header or a `?t=` query parameter.
 - Every request is checked against the Host header and, when present, the Origin header; anything that is not `127.0.0.1` or `localhost` on the session's own port is rejected.
 - State is written to `~/.codereview-axi/state.json` with file mode `0600`.
-- `cr` never writes to the repository under review. It reads the working diff and holds comments in its own state file; this is proven by an integration test that asserts the repository is byte-identical after a full session.
+- `cr` never writes to the repository under review, and never checks anything out, fetches, or switches branches, even for `--pr`: if the current branch is not the PR's head, `cr` refuses and prints the command to run rather than doing it. It reads the diff and holds comments in its own state file; this is proven by an integration test that asserts the repository is byte-identical after a full session. The only external process `cr` spawns beyond `git` is `gh`, and only for `--pr`, to read PR metadata; it is never used to fetch or check out.
+- A file read confines itself to the resolved, real path staying inside the worktree, so a symlink in the diff pointing outside the repository (for example at `~/.ssh/id_rsa`) is refused rather than followed. This matters once the diff under review can come from someone else's pull request. A symlink pointing inside the repository still resolves and reads normally.
 - Anyone holding a session's token can read the full diff and comment thread for that session over loopback; that is what the token is for; there is no further access control within a session.
 
 ## Not in v1
@@ -79,11 +84,12 @@ Deferred to v2, absent by design, so nobody files them as bugs:
 - File-level comments in the UI.
 - Chat (the session's `chat` array stays in the shape so v2 can fill it without a migration).
 - `--exclude`.
-- Side-by-side view.
 - Virtualised scrolling.
 - Bulk resolve.
 - Markdown in comment bodies.
 - A Claude Code skill wrapper.
+- Posting review comments back to GitHub, or reading existing PR comments.
+- Any provider other than GitHub, or reviewing an arbitrary rev range beyond a base ref.
 
 The browser UI itself has no automated test coverage in v1; it rests on manual verification.
 

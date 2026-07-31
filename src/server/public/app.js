@@ -617,7 +617,9 @@ const load = async () => {
       ? `against ${session.base}`
       : '';
   const noteText = session.note || 'no note';
-  $('note').textContent = comparison ? `${comparison}: ${noteText}` : noteText;
+  const fullNote = comparison ? `${comparison}: ${noteText}` : noteText;
+  $('note').textContent = fullNote;
+  $('note').title = fullNote;
   // The label names what clicking will switch to, read from the session so two
   // tabs cannot disagree, never from local state.
   $('view').textContent = session.view === 'split' ? 'unified' : 'split';

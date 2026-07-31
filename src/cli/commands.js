@@ -9,12 +9,12 @@ import { sessionKey } from '../state/sessions.js';
 const USAGE = [
   'usage: cr <verb> [flags]',
   '',
-  '  open     [--note TEXT] [--base REF | --pr N] [--no-browser]   start or resume a review, against a base ref or a pull request',
-  '  wait     [--timeout 300] [--say TEXT]   block until the human sends comments',
-  '  list     [--status open]                 print comments without blocking',
-  '  reply    --id N --status S --body TEXT   answer one comment (fixed|explained|skipped)',
-  '  refresh                                  recompute the diff and push it to the tab',
-  '  close                                    end the session',
+  '  open     [--note TEXT] [--base REF | --pr N] [--no-browser]  start or resume a review, against a base ref or a pull request (--pr needs gh on PATH)',
+  '  wait     [--timeout 300] [--say TEXT]                        block until the human sends comments',
+  '  list     [--status open]                                     print comments without blocking',
+  '  reply    --id N --status S --body TEXT                       answer one comment (fixed|explained|skipped)',
+  '  refresh                                                       recompute the diff and push it to the tab',
+  '  close                                                         end the session',
   '',
   'exit codes: 0 ok, 1 usage or state, 2 nothing to review, 3 server unreachable',
 ].join('\n');
@@ -91,7 +91,17 @@ const HANDLERS = {
         throw new CliError(1, err instanceof Error ? err.message : String(err));
       }
 
-      const branch = await currentBranch(root);
+      let branch;
+      try {
+        branch = await currentBranch(root);
+      } catch (/** @type {any} */ err) {
+        // An unborn HEAD (no commits yet on this branch) fails `rev-parse`
+        // with git's raw "Command failed" prose; give it a message of its own.
+        const detail = typeof err?.stderr === 'string' && err.stderr.trim() !== ''
+          ? err.stderr.trim().split('\n')[0]
+          : (err instanceof Error ? err.message : String(err));
+        throw new CliError(1, `could not determine the current branch: ${detail}`);
+      }
       if (branch !== resolved.head) {
         const head = shQuote(resolved.head);
         throw new CliError(1, `PR ${n} reviews ${resolved.head}, but the current branch is ${branch}. Run: git fetch origin ${head} && git checkout ${head}`);
