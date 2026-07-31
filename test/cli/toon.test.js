@@ -60,7 +60,7 @@ test('quoteValue escapes per section 7.1', () => {
   assert.equal(quoteValue('a\nb'), '"a\\nb"');
   assert.equal(quoteValue('a\rb'), '"a\\rb"');
   assert.equal(quoteValue('a\tb'), '"a\\tb"');
-  assert.equal(quoteValue('ab'), '"a\\u0001b"');
+  assert.equal(quoteValue('a\u0001b'), '"a\\u0001b"');
 });
 
 test('a key outside the unquoted pattern is quoted', () => {
@@ -79,10 +79,88 @@ test('a multi-line string survives a tabular cell as an escaped one-liner', () =
 test('encode throws rather than emitting almost-TOON for a shape outside the subset', () => {
   assert.throws(() => encode({ mixed: [1, { a: 2 }] }), /uniform/);
   assert.throws(() => encode({ nested: [{ a: { b: 1 } }] }), /primitive/);
-  assert.throws(() => encode({ deep: [[1, 2]] }), /uniform/);
+  assert.throws(() => encode({ deep: [[1, 2]] }), /out of scope/);
 });
 
 test('the spec Appendix A users example round-trips to the documented bytes', () => {
   const out = encode({ users: [{ id: 1, name: 'Ada', role: 'admin' }, { id: 2, name: 'Bob', role: 'user' }] });
   assert.equal(out, 'users[2]{id,name,role}:\n  1,Ada,admin\n  2,Bob,user');
+});
+
+test('a lone surrogate errors rather than being emitted or substituted', () => {
+  assert.throws(() => encode({ s: '\ud800' }), /surrogate/);
+  assert.throws(() => encode({ s: '\udc00' }), /surrogate/);
+  assert.throws(() => encode({ s: 'abc\ud800' }), /surrogate/);
+});
+
+test('a properly paired astral character still encodes as literal UTF-8', () => {
+  assert.equal(encode({ s: '🎉' }), 's: 🎉');
+});
+
+test('a Date, Map, Set or RegExp is rejected rather than silently becoming {}', () => {
+  assert.throws(() => encode({ d: new Date() }), /Date/);
+  assert.throws(() => encode({ m: new Map() }), /Map/);
+  assert.throws(() => encode({ s: new Set() }), /Set/);
+  assert.throws(() => encode({ r: /x/ }), /RegExp/);
+});
+
+test('a genuine plain object still encodes, including one with a null prototype', () => {
+  assert.equal(encode({ o: { a: 1 } }), 'o:\n  a: 1');
+  const nullProto = Object.create(null);
+  nullProto.a = 1;
+  assert.equal(encode({ o: nullProto }), 'o:\n  a: 1');
+});
+
+test('an inherited key does not satisfy the tabular uniformity check', () => {
+  const row = Object.create({ b: 'ghost' });
+  row.a = 3;
+  row.c = 4;
+  assert.throws(() => encode({ rows: [{ a: 1, b: 2 }, row] }), /uniform/);
+});
+
+test('NaN and Infinity encode as null per section 3, not as an error', () => {
+  assert.equal(encode({ a: NaN, b: Infinity, c: -Infinity }), 'a: null\nb: null\nc: null');
+});
+
+test('tabular cells map by field name, not by position', () => {
+  const out = encode({ rows: [{ a: 1, b: 2 }, { b: 20, a: 10 }] });
+  assert.equal(out, 'rows[2]{a,b}:\n  1,2\n  10,20');
+});
+
+test('a leading or trailing tab forces quoting', () => {
+  assert.equal(quoteValue('\tlead'), '"\\tlead"');
+  assert.equal(quoteValue('trail\t'), '"trail\\t"');
+});
+
+test('numeric-like matching is case-insensitive for the exponent marker', () => {
+  assert.equal(quoteValue('1E5'), '"1E5"');
+});
+
+test('-0 encodes as 0', () => {
+  assert.equal(encode({ a: -0 }), 'a: 0');
+});
+
+test('nested objects indent two and three levels deep', () => {
+  assert.equal(encode({ a: { b: { c: 1 } } }), 'a:\n  b:\n    c: 1');
+  assert.equal(encode({ a: { b: { c: { d: 1 } } } }), 'a:\n  b:\n    c:\n      d: 1');
+});
+
+test('a tabular array nests correctly inside an object field', () => {
+  const out = encode({ outer: { comments: [{ id: 1, file: 'a.js' }, { id: 2, file: 'b.js' }] } });
+  assert.equal(out, 'outer:\n  comments[2]{id,file}:\n    1,a.js\n    2,b.js');
+});
+
+test('an empty root object produces an empty document', () => {
+  assert.equal(encode({}), '');
+});
+
+test('a nested empty object produces a bare key line', () => {
+  assert.equal(encode({ a: {} }), 'a:');
+});
+
+test('a non-object root throws', () => {
+  assert.throws(() => encode(5), /object/);
+  assert.throws(() => encode('hello'), /object/);
+  assert.throws(() => encode([1, 2]), /object/);
+  assert.throws(() => encode(null), /object/);
 });
