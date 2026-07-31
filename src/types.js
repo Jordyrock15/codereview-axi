@@ -31,6 +31,7 @@
  * @property {number} added — Count of added lines.
  * @property {number} removed — Count of removed lines.
  * @property {Hunk[]} hunks — Empty for binary files.
+ * @property {string[]} tags — Empty except for a synthetic entry standing in for a diff header the parser could not decode, which carries 'unparsable'.
  */
 
 /**
@@ -44,7 +45,7 @@
  * @property {number} added — Count of added lines.
  * @property {number} removed — Count of removed lines.
  * @property {Hunk[]} hunks — Empty for binary files.
- * @property {string[]} tags — Any of 'untracked', 'binary', 'generated', 'large'.
+ * @property {string[]} tags — Any of 'untracked', 'binary', 'generated', 'large', 'unparsable'.
  */
 
 /**
@@ -70,6 +71,7 @@
  * @property {'fix'|'explain'|'ignore'} verdict — What the human wants the agent to do.
  * @property {'open'|'sent'|'answered'|'resolved'|'reopened'|'stale'} status — Lifecycle position.
  * @property {{status: 'fixed'|'explained'|'skipped', body: string, at: string}|null} agentReply — The agent's response, null until replied.
+ * @property {string|null} deliveredAt — ISO timestamp of the long-poll delivery, null until delivered.
  * @property {string} createdAt — ISO timestamp.
  * @property {string} updatedAt — ISO timestamp.
  */
@@ -81,6 +83,8 @@
  * @property {string} key — Hash of the worktree toplevel path.
  * @property {string} token — Random 32-byte hex secret gating API access.
  * @property {string} repo — Absolute worktree toplevel path.
+ * @property {string|null} base — Ref the diff is compared against, null for the working diff.
+ * @property {number|null} pr — Pull request number this session reviews, null when opened without `--pr`.
  * @property {string} url — Browser URL including the token.
  * @property {'open'|'closed'} status — Whether the session is live.
  * @property {'human'|'agent'|null} closedBy — Who ended it, null while open.
@@ -90,6 +94,7 @@
  * @property {Comment[]} comments — All comments, any status.
  * @property {{role: 'agent'|'human', text: string, at: string}[]} chat — Message log.
  * @property {{holder: number, expiresAt: string}|null} lease — Current waiter, null when free.
+ * @property {'unified'|'split'} view — Reading preference, per session, not per file.
  * @property {string} createdAt — ISO timestamp.
  * @property {string} updatedAt — ISO timestamp.
  */

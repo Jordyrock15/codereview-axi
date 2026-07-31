@@ -33,3 +33,25 @@ test('collects extra positionals', () => {
 test('supports --flag=value', () => {
   assert.equal(parseArgs(['wait', '--timeout=120']).flags.timeout, '120');
 });
+
+test('--__proto__ sets an own key, not the object prototype', () => {
+  const { flags } = parseArgs(['open', '--__proto__', 'main']);
+  assert.equal(Object.getPrototypeOf(flags), null);
+  assert.equal(Object.hasOwn(flags, '__proto__'), true);
+  assert.equal(flags.__proto__, 'main');
+  // The failure this prevents: a {} literal takes '--__proto__ main' as a
+  // prototype assignment, so Object.keys(flags) never lists it and
+  // unknownFlags() lets it through unnoticed.
+  assert.deepEqual(Object.keys(flags), ['__proto__']);
+});
+
+test('--constructor and --toString still set ordinary own keys', () => {
+  const { flags } = parseArgs(['open', '--constructor', 'x', '--toString', 'y']);
+  assert.deepEqual(Object.keys(flags).sort(), ['constructor', 'toString']);
+});
+
+test('a declared boolean flag is not swallowed as the next token\'s owner', () => {
+  const { flags, positional } = parseArgs(['open', '--no-browser', 'main'], new Set(['no-browser']));
+  assert.equal(flags['no-browser'], true);
+  assert.deepEqual(positional, ['main']);
+});

@@ -1,0 +1,9 @@
+diff --git a/src/tail.js b/src/tail.js
+index 6666666..7777777 100644
+--- a/src/tail.js
++++ b/src/tail.js
+@@ -1,1 +1,1 @@
+-const tail = 1;
+\ No newline at end of file
++const tail = 2;
+\ No newline at end of file

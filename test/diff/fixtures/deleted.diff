@@ -1,0 +1,8 @@
+diff --git a/src/gone.js b/src/gone.js
+deleted file mode 100644
+index 5555555..0000000
+--- a/src/gone.js
++++ /dev/null
+@@ -1,2 +0,0 @@
+-const gone = true;
+-export default gone;

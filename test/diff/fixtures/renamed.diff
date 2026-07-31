@@ -1,0 +1,12 @@
+diff --git a/src/old-name.js b/src/new-name.js
+similarity index 92%
+rename from src/old-name.js
+rename to src/new-name.js
+index 1111111..2222222 100644
+--- a/src/old-name.js
++++ b/src/new-name.js
+@@ -1,3 +1,3 @@
+ const a = 1;
+-const b = 2;
++const b = 3;
+ const c = 4;
