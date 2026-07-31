@@ -165,7 +165,7 @@ const textOf = (row, side) => row.querySelector(`.t[data-side="${side}"]`)?.text
  * @param {'old'|'new'} side
  * @param {number} from
  * @param {number} to
- * @returns {{quote: string, contiguous: boolean}}
+ * @returns {{quote: string, contiguous: boolean, rowCount: number}}
  */
 const quoteFromRows = (side, from, to) => {
   const rows = selectionRows($('diff'));
@@ -180,7 +180,7 @@ const quoteFromRows = (side, from, to) => {
 
   const contiguous = chosen.length > 0 && chosen.every((index) => rows[index].dataset.hunk === rows[chosen[0]].dataset.hunk);
   const quote = chosen.map((i) => textOf(rows[i], side)).join('\n');
-  return { quote, contiguous };
+  return { quote, contiguous, rowCount: chosen.length };
 };
 
 /**
@@ -234,10 +234,17 @@ const openComposer = (file, afterRow) => {
     // picking.end, it does not rebuild this handler's closure.
     const start = Math.min(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
     const end = Math.max(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
-    const { quote, contiguous } = quoteFromRows(picking.side, start, end);
+    const { quote, contiguous, rowCount } = quoteFromRows(picking.side, start, end);
 
-    if (!contiguous || quote === '') {
-      warn.textContent = 'Selection is not contiguous. Pick a single unbroken range and try again.';
+    // A blank quote is not itself an error, a genuinely blank line is a
+    // legitimate one-line quote. Only no matching rows, or rows split across
+    // a hunk boundary, mean the selection cannot be saved.
+    if (rowCount === 0) {
+      warn.textContent = 'No lines are selected. Pick a range and try again.';
+      return;
+    }
+    if (!contiguous) {
+      warn.textContent = 'Selection crosses a hunk boundary. Pick a single unbroken range and try again.';
       return;
     }
 
@@ -251,7 +258,12 @@ const openComposer = (file, afterRow) => {
       }),
     });
 
-    if (!res.ok) { save.disabled = false; return; }
+    if (!res.ok) {
+      save.disabled = false;
+      const problem = await res.json().catch(() => null);
+      warn.textContent = problem?.error ?? `Save failed (${res.status}).`;
+      return;
+    }
     box.remove();
     clearPick();
     await load();

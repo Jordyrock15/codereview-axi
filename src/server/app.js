@@ -74,7 +74,12 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
   /**
    * A quote must carry exactly the lines its range claims, or re-anchoring will
    * never find it again. Content is not compared: expanded-context lines
-   * legitimately sit outside the snapshot.
+   * legitimately sit outside the snapshot, and a blank line is a legitimate
+   * quote too, `''.split('\n').length` is already 1, the right count for a
+   * one-line range. This can no longer tell a genuinely blank line apart from
+   * a missing quote on a one-line range; that trade is accepted because the
+   * defect this guards against (an empty quote from unmatched rows) is fixed
+   * at source now that the quote is read from the rendered rows.
    * @param {any} body
    * @returns {void}
    */
@@ -86,7 +91,7 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
     if (!Number.isInteger(start) || !Number.isInteger(end)) throw new StateError(400, 'startLine and endLine must be integers');
 
     const expected = end - start + 1;
-    const supplied = String(body?.quote ?? '') === '' ? 0 : String(body.quote).split('\n').length;
+    const supplied = String(body?.quote ?? '').split('\n').length;
     if (supplied !== expected) {
       throw new StateError(400, `quote has ${supplied} line(s) but the range covers ${expected}`);
     }
@@ -218,19 +223,11 @@ export const createApp = ({ port, now = () => Date.now(), hub = createHub() }) =
       pattern: '/api/sessions/:key/comments/:id',
       handler: async (ctx) => {
         requireOpen(await guarded(ctx));
-        const comment = await mutateState((state) => {
-          const session = state.sessions[ctx.params.key];
-          // The patch body carries no range of its own, so a quote edit is only
-          // checkable against the comment already stored: read it, then validate.
-          if (ctx.body?.quote !== undefined) {
-            const existing = session.comments.find((c) => c.id === Number(ctx.params.id));
-            if (!existing) throw new StateError(404, `no comment with id ${ctx.params.id}`);
-            requireQuoteShape({
-              scope: existing.scope, startLine: existing.startLine, endLine: existing.endLine, quote: ctx.body.quote,
-            });
-          }
-          return patchComment(session, Number(ctx.params.id), ctx.body ?? {}, now());
-        });
+        // Quote editing is not supported: patchComment has no branch for it, so
+        // a quote here would validate and then be silently dropped. No guard.
+        const comment = await mutateState((state) => (
+          patchComment(state.sessions[ctx.params.key], Number(ctx.params.id), ctx.body ?? {}, now())
+        ));
         hub.publish(ctx.params.key, 'comment', comment);
         return { body: comment };
       },
