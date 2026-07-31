@@ -111,11 +111,36 @@ test('reopening with a different base is refused', () => {
   });
 });
 
+test('reopening a no-base session with a supplied base is refused', () => {
+  /** @type {State} */
+  const state = { sessions: {} };
+  open(state);
+
+  assert.throws(() => open(state, { base: 'main', now: NOW + 10 }), (err) => {
+    assert.equal(/** @type {any} */ (err).status, 409);
+    assert.match(/** @type {Error} */ (err).message, /base/);
+    return true;
+  });
+});
+
 test('reopening with the same base is fine', () => {
   /** @type {State} */
   const state = { sessions: {} };
   open(state, { base: 'main' });
   assert.equal(open(state, { base: 'main', now: NOW + 10 }).reused, true);
+});
+
+test('a closed session with a different base is reopened as a fresh session', () => {
+  /** @type {State} */
+  const state = { sessions: {} };
+  const first = open(state, { base: 'main' }).session;
+  closeSession(first, 'human', NOW + 10);
+
+  const { session, reused } = open(state, { base: 'develop', now: NOW + 20 });
+
+  assert.equal(reused, false);
+  assert.equal(session.base, 'develop');
+  assert.notEqual(session.token, first.token);
 });
 
 test('closeSession records who ended it', () => {
