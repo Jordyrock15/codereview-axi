@@ -117,7 +117,9 @@ test('a full session runs open, comment, send, wait, reply, refresh, reopen, clo
 
   // The agent collects. Context is computed by the route (see
   // test/server/pending.test.js) but dropped from the CLI's own output.
-  const waited = JSON.parse((await cr(['wait', '--timeout', '5', '--json'])).out);
+  // --fields all is needed here to see status at all: it sits outside the
+  // minimal default set (see src/cli/present.js).
+  const waited = JSON.parse((await cr(['wait', '--timeout', '5', '--json', '--fields', 'all'])).out);
   assert.equal(waited.comments.length, 1);
   assert.equal(waited.comments[0].status, 'sent');
   assert.equal(waited.comments[0].context, undefined, 'context is CLI-only noise, dropped before printing');
@@ -129,7 +131,7 @@ test('a full session runs open, comment, send, wait, reply, refresh, reopen, clo
   const refreshed = JSON.parse((await cr(['refresh', '--json'])).out);
   assert.deepEqual(refreshed.stale, [], 'an answered thread never goes stale, even though its quote is gone');
 
-  const listed = JSON.parse((await cr(['list', '--json'])).out);
+  const listed = JSON.parse((await cr(['list', '--json', '--fields', 'all'])).out);
   assert.equal(listed.comments[0].status, 'answered');
 
   // The human reopens, the agent sees it again.

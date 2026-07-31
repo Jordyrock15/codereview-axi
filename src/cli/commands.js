@@ -8,6 +8,7 @@ import { sessionKey } from '../state/sessions.js';
 import { shQuote } from '../shell.js';
 import { USAGE, verbHelp, unknownFlags } from './spec.js';
 import { encode } from './toon.js';
+import { presentComment, selectFields, AGENT_COMMENT_FIELDS } from './present.js';
 
 export { USAGE } from './spec.js';
 
@@ -25,6 +26,18 @@ const resolveSession = async (cwd) => {
     throw new CliError(1, `no open session for ${root}, run cr open first`, 'state');
   }
   return { key, token: session.token, repo: root };
+};
+
+/**
+ * @param {Record<string, string|boolean>} flags
+ * @returns {string[]}
+ */
+const fieldsFrom = (flags) => {
+  try {
+    return selectFields(typeof flags.fields === 'string' ? flags.fields : undefined);
+  } catch (err) {
+    throw new CliError(1, err instanceof Error ? err.message : String(err), 'usage');
+  }
 };
 
 /**
@@ -116,19 +129,21 @@ const HANDLERS = {
     }
 
     const path = `/api/sessions/${key}/pending?holder=${process.pid}&timeout=${timeout}`;
-    return unwrap(await request(port, 'GET', path, undefined, token));
+    const fields = fieldsFrom(flags);
+    const pending = unwrap(await request(port, 'GET', path, undefined, token));
+    return { ...pending, comments: pending.comments.map((/** @type {any} */ c) => presentComment(c, fields)) };
   },
 
   list: async ({ flags, cwd, port }) => {
     const { key, token } = await resolveSession(cwd);
+    const fields = fieldsFrom(flags);
     const session = unwrap(await request(port, 'GET', `/api/sessions/${key}`, undefined, token));
     const wanted = typeof flags.status === 'string' ? flags.status : null;
 
-    return {
-      comments: wanted === null
-        ? session.comments
-        : session.comments.filter((/** @type {{status: string}} */ c) => c.status === wanted),
-    };
+    const comments = wanted === null
+      ? session.comments
+      : session.comments.filter((/** @type {{status: string}} */ c) => c.status === wanted);
+    return { comments: comments.map((/** @type {any} */ c) => presentComment(c, fields)) };
   },
 
   reply: async ({ flags, cwd, port }) => {
@@ -139,7 +154,11 @@ const HANDLERS = {
     if (typeof flags.body !== 'string') throw new CliError(1, 'reply needs --body TEXT', 'usage');
 
     const body = { id, status: flags.status, body: flags.body };
-    return unwrap(await request(port, 'POST', `/api/sessions/${key}/replies`, body, token));
+    const comment = unwrap(await request(port, 'POST', `/api/sessions/${key}/replies`, body, token));
+    // A single reply confirmation is not the volume concern the trimmed
+    // defaults exist for, so it keeps everything bar deliveredAt: the agent
+    // wants to see status flip to answered without a round trip.
+    return presentComment(comment, AGENT_COMMENT_FIELDS);
   },
 
   refresh: async ({ cwd, port }) => {
@@ -173,12 +192,9 @@ const commentCounts = (comments) => {
 };
 
 /**
- * Flattens the shapes `toon.js` cannot carry into presentation-safe
- * primitives, for the CLI's own output only: the browser still gets the
- * server's untouched payload. `tags` joins to a space-separated string,
- * `context` is dropped (the agent reads the file itself; it is large and the
- * agent does not need it), and `agentReply` flattens to `''` or `status:
- * body`. TODO(Task 4): move this into present.js rather than duplicating it.
+ * Joins `files[].tags` into a space-separated string for `open`, `refresh`
+ * and `close`, the one shape `toon.js` cannot carry that isn't a comment.
+ * Comment presentation lives in `present.js`.
  * @param {unknown} value
  * @returns {unknown}
  */
@@ -189,15 +205,7 @@ const forDisplay = (value) => {
   /** @type {Record<string, unknown>} */
   const out = {};
   for (const [k, v] of Object.entries(value)) {
-    if (k === 'context') continue;
-    if (k === 'tags' && Array.isArray(v)) {
-      out[k] = v.join(' ');
-    } else if (k === 'agentReply') {
-      const reply = /** @type {{status: string, body: string}|null} */ (v);
-      out[k] = reply === null ? '' : `${reply.status}: ${reply.body}`;
-    } else {
-      out[k] = forDisplay(v);
-    }
+    out[k] = k === 'tags' && Array.isArray(v) ? v.join(' ') : forDisplay(v);
   }
   return out;
 };

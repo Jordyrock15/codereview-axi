@@ -70,6 +70,8 @@ Slugs seen under exit 1 include `usage` (the human typed something wrong, for ex
 
 If the server dies mid-`wait`, `cr wait` exits 3 so the agent reports the failure rather than looping. Sent comments stay queued; re-running `wait` picks them up.
 
+`wait` and `list` print each comment as `id`, `file`, `lines`, `verdict`, `body` and `quote` by default, the fields an agent acts on. `--fields all` asks for everything else too (`scope`, `status`, `agentReply`, `createdAt`, `updatedAt`), and `--fields id,quote` asks for a specific subset. `deliveredAt` is internal delivery bookkeeping and is never available, at any `--fields` value.
+
 ## Security
 
 - The server binds to loopback only; it is never reachable from another machine.
