@@ -163,7 +163,15 @@ const HANDLERS = {
     const fields = fieldsFrom(flags);
     const limit = flags.full === true ? Infinity : undefined;
     const pending = unwrap(await request(port, 'GET', path, undefined, token));
-    return { ...pending, comments: pending.comments.map((/** @type {any} */ c) => presentComment(c, fields, { limit })) };
+    const session = unwrap(await request(port, 'GET', `/api/sessions/${key}`, undefined, token));
+    const counts = commentCounts(session.comments);
+
+    if (pending.comments.length === 0) {
+      const { comments, ...rest } = pending;
+      return { ...rest, empty: `no comments (0 of ${session.comments.length})`, counts };
+    }
+
+    return { ...pending, comments: pending.comments.map((/** @type {any} */ c) => presentComment(c, fields, { limit })), counts };
   },
 
   list: async ({ flags, cwd, port }) => {
@@ -173,10 +181,18 @@ const HANDLERS = {
     const session = unwrap(await request(port, 'GET', `/api/sessions/${key}`, undefined, token));
     const wanted = typeof flags.status === 'string' ? flags.status : null;
 
-    const comments = wanted === null
-      ? session.comments
-      : session.comments.filter((/** @type {{status: string}} */ c) => c.status === wanted);
-    return { comments: comments.map((/** @type {any} */ c) => presentComment(c, fields, { limit })) };
+    const all = session.comments;
+    const matched = wanted === null
+      ? all
+      : all.filter((/** @type {{status: string}} */ c) => c.status === wanted);
+    const counts = commentCounts(all);
+
+    if (matched.length === 0) {
+      const filter = wanted === null ? '' : ` match status=${wanted}`;
+      return { empty: `no comments (0 of ${all.length}${filter})`, counts };
+    }
+
+    return { comments: matched.map((/** @type {any} */ c) => presentComment(c, fields, { limit })), counts };
   },
 
   reply: async ({ flags, cwd, port }) => {

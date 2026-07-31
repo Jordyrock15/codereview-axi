@@ -4,6 +4,7 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { makeRepo } from '../helpers/repo.js';
+import { openSessionWithComments } from '../helpers/session.js';
 import { USAGE, run, ERROR_SLUGS } from '../../src/cli/commands.js';
 
 /**
@@ -264,12 +265,14 @@ test('open exits 1 outside a git worktree', async (t) => {
   assert.match(result.out, /not inside a git worktree/);
 });
 
-test('list prints comments for the cwd session', async (t) => {
+test('list states a definitive empty result for the cwd session, not a bare comment array', async (t) => {
   const { cr } = await setup(t);
   await cr(['open']);
   const result = await cr(['list', '--json']);
   assert.equal(result.code, 0);
-  assert.deepEqual(JSON.parse(result.out).comments, []);
+  const json = JSON.parse(result.out);
+  assert.match(json.empty, /no comments \(0 of 0\)/);
+  assert.equal(json.comments, undefined, 'an empty array is not a definitive empty state');
 });
 
 test('a verb other than open exits 1 when no session exists for the cwd', async (t) => {
@@ -279,14 +282,15 @@ test('a verb other than open exits 1 when no session exists for the cwd', async 
   assert.match(result.out, /no open session/);
 });
 
-test('wait returns an empty comment array on timeout', async (t) => {
+test('wait states a definitive empty result on timeout, not a bare comment array', async (t) => {
   const { cr } = await setup(t);
   await cr(['open']);
   const result = await cr(['wait', '--timeout', '1', '--json']);
 
   assert.equal(result.code, 0);
   const json = JSON.parse(result.out);
-  assert.deepEqual(json.comments, []);
+  assert.match(json.empty, /no comments \(0 of 0\)/);
+  assert.equal(json.comments, undefined, 'an empty array is not a definitive empty state');
   assert.equal(json.closed, false);
 });
 
@@ -329,6 +333,8 @@ test('reply and refresh drive a full round', async (t) => {
   assert.equal(waited.comments.length, 1);
   assert.equal(waited.comments[0].body, 'rounding is wrong');
   assert.equal(waited.comments[0].context, undefined, 'context is CLI-only noise, dropped before printing');
+  assert.equal(waited.counts.total, 1);
+  assert.equal(waited.counts.sent, 1);
 
   const replied = await cr(['reply', '--id', '1', '--status', 'fixed', '--body', 'distributed the remainder']);
   assert.equal(replied.code, 0);
@@ -632,4 +638,33 @@ test("every verb's real success payload encodes as TOON without throwing", async
 
   const closed = JSON.parse((await cr(['close', '--json'])).out);
   assert.doesNotThrow(() => encode(closed), 'close');
+});
+
+test('list reports counts over the unfiltered set, so a filter shows what it excluded', async (t) => {
+  const s = await openSessionWithComments(t, [
+    { body: 'one', verdict: 'fix' },
+    { body: 'two', verdict: 'fix' },
+  ]);
+
+  const result = await run({ argv: ['list', '--json'], cwd: s.repo.dir });
+  const parsed = JSON.parse(result.out);
+  assert.equal(parsed.counts.total, 2);
+  assert.equal(parsed.counts.open, 2);
+});
+
+test('an empty result states so and names the filter and the total', async (t) => {
+  const s = await openSessionWithComments(t, [{ body: 'one', verdict: 'fix' }]);
+
+  const result = await run({ argv: ['list', '--status', 'answered'], cwd: s.repo.dir });
+  assert.equal(result.code, 0);
+  assert.match(result.out, /no comments \(0 of 1 match status=answered\)/);
+});
+
+test('an empty result with no comments at all still states so, never bare output', async (t) => {
+  const s = await openSessionWithComments(t, []);
+
+  const result = await run({ argv: ['list'], cwd: s.repo.dir });
+  assert.equal(result.code, 0);
+  assert.match(result.out, /no comments \(0 of 0\)/);
+  assert.equal(/comments: \[\]/.test(result.out), false, 'an empty array is not a definitive empty state');
 });
