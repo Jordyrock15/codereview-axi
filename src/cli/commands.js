@@ -260,6 +260,31 @@ const forDisplay = (value) => {
 };
 
 /**
+ * Live session state for a bare `cr`, or null when there is nothing to show:
+ * not in a worktree, no session for it, or the session is closed. Deliberately
+ * does not call `ensureServer`: a status glance must not start a daemon.
+ * @param {string} cwd
+ * @returns {Promise<Record<string, unknown>|null>}
+ */
+const liveState = async (cwd) => {
+  const root = await toplevel(cwd).catch(() => null);
+  if (root === null) return null;
+
+  const session = (await loadState()).sessions[sessionKey(root)];
+  if (!session || session.status !== 'open') return null;
+
+  return {
+    repo: root,
+    note: session.note,
+    base: session.base ?? '',
+    pr: session.pr ?? '',
+    unsent: session.comments.filter((/** @type {{status: string}} */ c) => c.status === 'open').length,
+    counts: commentCounts(session.comments),
+    help: ['cr wait', 'cr list --status open'],
+  };
+};
+
+/**
  * `resolvePr` is injectable so tests can drive the `--pr` wiring without a
  * real `gh` on PATH, the same seam `resolvePr` itself uses for `gh`.
  * @param {{argv: string[], cwd: string, env?: NodeJS.ProcessEnv, resolvePr?: ResolvePr}} input
@@ -277,7 +302,11 @@ export const run = async ({ argv, cwd, resolvePr = defaultResolvePr }) => {
   /** @param {CliError} err */
   const fail = (err) => ({ code: err.code, out: asText({ error: { code: err.slug, message: err.message } }) });
 
-  if (verb === 'help') return { code: 0, out: USAGE };
+  if (verb === 'help') {
+    if (flags.help === true) return { code: 0, out: USAGE };
+    const live = await liveState(cwd);
+    return { code: 0, out: live === null ? USAGE : asText(live) };
+  }
 
   const handler = HANDLERS[verb];
   if (!handler) return fail(new CliError(1, `unknown verb "${verb}"`, 'usage'));

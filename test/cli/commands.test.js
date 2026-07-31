@@ -692,3 +692,50 @@ test('--json output is parseable with help[] present', async (t) => {
   const parsed = JSON.parse(result.out);
   assert.equal(Array.isArray(parsed.help), true);
 });
+
+test('bare cr inside a repo with a session shows live state, not usage', async (t) => {
+  const s = await openSessionWithComments(t, [{ body: 'one', verdict: 'fix' }]);
+
+  const result = await run({ argv: [], cwd: s.repo.dir });
+  assert.equal(result.code, 0);
+  assert.equal(/^usage: cr/.test(result.out), false, 'usage is the fallback, not the answer');
+  assert.match(result.out, /unsent: 1|open: 1/);
+});
+
+test('bare cr outside a git worktree falls back to usage', async () => {
+  const result = await run({ argv: [], cwd: tmpdir() });
+  assert.equal(result.code, 0);
+  assert.match(result.out, /^usage: cr/);
+});
+
+test('bare cr in a repo with no session falls back to usage', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+
+  const result = await run({ argv: [], cwd: repo.dir });
+  assert.equal(result.code, 0);
+  assert.match(result.out, /^usage: cr/);
+});
+
+test('bare cr does not start the server daemon', async (t) => {
+  await isolateHome(t);
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+
+  await run({ argv: [], cwd: repo.dir });
+  // No server.json is written, because ensureServer was never called.
+  await assert.rejects(() => readFile(path.join(String(process.env.CODEREVIEW_AXI_HOME), 'server.json')));
+});
+
+test('bare cr with --json gives live state as JSON, usage fallback stays plain text', async (t) => {
+  const s = await openSessionWithComments(t, [{ body: 'one', verdict: 'fix' }]);
+
+  const live = await run({ argv: ['--json'], cwd: s.repo.dir });
+  assert.equal(live.code, 0);
+  const parsed = JSON.parse(live.out);
+  assert.equal(parsed.unsent, 1);
+
+  const fallback = await run({ argv: ['--json'], cwd: tmpdir() });
+  assert.equal(fallback.code, 0);
+  assert.match(fallback.out, /^usage: cr/);
+});
