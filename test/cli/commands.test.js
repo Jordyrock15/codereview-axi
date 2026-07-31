@@ -4,14 +4,21 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { makeRepo } from '../helpers/repo.js';
-import { USAGE, run } from '../../src/cli/commands.js';
+import { USAGE, run, ERROR_SLUGS } from '../../src/cli/commands.js';
 
-/** @param {import('node:test').TestContext} t */
-const setup = async (t) => {
+/**
+ * Redirects CODEREVIEW_AXI_HOME to a throwaway directory for the test's
+ * duration and kills any daemon it spawns, so `ensureServer` never touches
+ * the developer's real `~/.codereview-axi`. Every test that reaches `run()`
+ * with valid flags must call this: `ensureServer` runs before a handler gets
+ * a chance to fail for its own reasons, so even a test aimed at some other
+ * error still spawns a real daemon under whatever home is active.
+ * @param {import('node:test').TestContext} t
+ */
+const isolateHome = async (t) => {
   const home = await mkdtemp(path.join(tmpdir(), 'cr-home-'));
   process.env.CODEREVIEW_AXI_HOME = home;
 
-  const { run } = await import('../../src/cli/commands.js');
   const { readServerFile } = await import('../../src/server/index.js');
   const { shutdown } = await import('../../src/cli/client.js');
 
@@ -23,6 +30,12 @@ const setup = async (t) => {
   });
 
   t.after(() => { delete process.env.CODEREVIEW_AXI_HOME; });
+};
+
+/** @param {import('node:test').TestContext} t */
+const setup = async (t) => {
+  await isolateHome(t);
+  const { run } = await import('../../src/cli/commands.js');
 
   const repo = await makeRepo({ 'a.js': 'one\ntwo\nthree\n' });
   t.after(repo.cleanup);
@@ -319,17 +332,75 @@ test('reply and refresh drive a full round', async (t) => {
 
   const replied = await cr(['reply', '--id', '1', '--status', 'fixed', '--body', 'distributed the remainder']);
   assert.equal(replied.code, 0);
+  // The failure this prevents: routing reply through the full field set, so
+  // the body the agent just wrote (and its quote, and timestamps) come back
+  // to it for no reason.
+  assert.match(replied.out, /^id: 1$/m);
+  assert.match(replied.out, /^status: answered$/m);
+  assert.match(replied.out, /^counts:$/m);
+  assert.match(replied.out, /^\s+total: 1$/m);
+  assert.doesNotMatch(replied.out, /distributed the remainder/);
+  assert.doesNotMatch(replied.out, /rounding is wrong/);
+  assert.doesNotMatch(replied.out, /quote/);
 
   await repo.write('a.js', 'one\nFIXED\nthree\n');
   const refreshed = JSON.parse((await cr(['refresh', '--json'])).out);
   assert.deepEqual(refreshed.stale, []);
 });
 
-test('reply exits 1 on a bad id or status', async (t) => {
+test('reply exits 1 with not-found on an unknown id, invalid-input on a bad status value', async (t) => {
+  const { cr } = await setup(t);
+  const opened = JSON.parse((await cr(['open', '--json'])).out);
+
+  const unknownId = await cr(['reply', '--id', '9', '--status', 'fixed', '--body', 'x']);
+  assert.equal(unknownId.code, 1);
+  assert.match(unknownId.out, /code: not-found/);
+
+  const { loadState } = await import('../../src/state/store.js');
+  const { request } = await import('../../src/cli/client.js');
+  const { readServerFile } = await import('../../src/server/index.js');
+  const { port } = /** @type {{pid: number, port: number, version: string}} */ (await readServerFile());
+  const { token } = (await loadState()).sessions[opened.key];
+  await request(port, 'POST', `/api/sessions/${opened.key}/comments`, {
+    scope: 'line', file: 'a.js', side: 'new', startLine: 2, endLine: 2,
+    quote: 'TWO', body: 'rounding is wrong', verdict: 'fix',
+  }, token);
+  await request(port, 'POST', `/api/sessions/${opened.key}/send`, {}, token);
+
+  const badStatus = await cr(['reply', '--id', '1', '--status', 'nope', '--body', 'x']);
+  assert.equal(badStatus.code, 1);
+  assert.match(badStatus.out, /code: invalid-input/);
+});
+
+test('refresh on a closed session exits 1 with the session-closed slug', async (t) => {
   const { cr } = await setup(t);
   await cr(['open']);
-  assert.equal((await cr(['reply', '--id', '9', '--status', 'fixed', '--body', 'x'])).code, 1);
-  assert.equal((await cr(['reply', '--id', '1', '--status', 'nope', '--body', 'x'])).code, 1);
+  await cr(['close']);
+
+  const result = await cr(['refresh']);
+  assert.equal(result.code, 1);
+  assert.match(result.out, /code: session-closed/);
+});
+
+test('wait exits 1 with the agent-waiting slug when another pid already holds the poll', async (t) => {
+  const { cr } = await setup(t);
+  const opened = JSON.parse((await cr(['open', '--json'])).out);
+
+  const { loadState } = await import('../../src/state/store.js');
+  const { request } = await import('../../src/cli/client.js');
+  const { readServerFile } = await import('../../src/server/index.js');
+  const { port } = /** @type {{pid: number, port: number, version: string}} */ (await readServerFile());
+  const { token } = (await loadState()).sessions[opened.key];
+
+  const held = request(port, 'GET', `/api/sessions/${opened.key}/pending?holder=999111&timeout=5`, undefined, token);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  const result = await cr(['wait', '--timeout', '1']);
+  assert.equal(result.code, 1);
+  assert.match(result.out, /code: agent-waiting/);
+
+  await request(port, 'POST', `/api/sessions/${opened.key}/send`, {}, token);
+  await held;
 });
 
 test('reply requires id, status and body', async (t) => {
@@ -367,16 +438,48 @@ test('wait reports a session the human closed', async (t) => {
   assert.equal(json.closedBy, 'human');
 });
 
-test('an unknown verb exits 1 with usage', async (t) => {
+test('an unknown verb exits 1 as a structured error, parseable under --json', async (t) => {
   const { cr } = await setup(t);
   const result = await cr(['frobnicate']);
   assert.equal(result.code, 1);
-  assert.match(result.out, /usage: cr/);
+  assert.match(result.out, /code: usage/);
+
+  const json = await cr(['frobnicate', '--json']);
+  assert.equal(json.code, 1);
+  assert.equal(JSON.parse(json.out).error.code, 'usage');
 });
 
 test('help exits 0', async (t) => {
   const { cr } = await setup(t);
   assert.equal((await cr(['help'])).code, 0);
+});
+
+test('--json=true is a usage error, not a silent TOON response the agent will fail to parse', async (t) => {
+  const { cr } = await setup(t);
+  await cr(['open']);
+  // The failure this prevents: flags.json === true never matches the string
+  // 'true', so the code path fell through to TOON while the agent, having
+  // asked for --json, tries JSON.parse on it and blows up.
+  const result = await cr(['list', '--json=true']);
+  assert.equal(result.code, 1);
+  assert.match(result.out, /code: usage/);
+  assert.match(result.out, /--json/);
+});
+
+test('--no-browser=false is a usage error, not a silently-opened tab', async (t) => {
+  const { run, repo } = await setup(t);
+  const result = await run({ argv: ['open', '--no-browser=false'], cwd: repo.dir });
+  assert.equal(result.code, 1);
+  assert.match(result.out, /code: usage/);
+  assert.match(result.out, /--no-browser/);
+});
+
+test('--no-browser main is a usage error: the stray token is rejected, not swallowed as the flag\'s value', async (t) => {
+  const { run, repo } = await setup(t);
+  const result = await run({ argv: ['open', '--no-browser', 'main'], cwd: repo.dir });
+  assert.equal(result.code, 1);
+  assert.match(result.out, /code: usage/);
+  assert.match(result.out, /main/);
 });
 
 test("the README's usage block matches USAGE exactly, not by eye", async () => {
@@ -393,20 +496,36 @@ test("the README's usage block matches USAGE exactly, not by eye", async () => {
   assert.equal(readmeBlock, verbsOnly);
 });
 
-test('an unrecognised flag is refused rather than silently ignored', async () => {
+test('every slug the code can emit is documented in the README, and vice versa', async () => {
+  const readme = await readFile(new URL('../../README.md', import.meta.url), 'utf8');
+  const documented = [...readme.matchAll(/^\| `([a-z-]+)` \|/gm)].map((m) => m[1]);
+
+  assert.ok(documented.length > 0, 'README must have a slug table');
+  assert.deepEqual([...ERROR_SLUGS].sort(), [...documented].sort());
+});
+
+test('an unrecognised flag is refused rather than silently ignored', async (t) => {
+  // This exits before ensureServer today, so it never touches the real home,
+  // but isolating it means a future regression that made it fall through
+  // fails loudly here rather than quietly spawning a real daemon.
+  await isolateHome(t);
   const result = await run({ argv: ['open', '--nonsense-flag', '--no-browser'], cwd: process.cwd() });
   assert.equal(result.code, 2);
   assert.match(result.out, /unknown flag --nonsense-flag/);
 });
 
-test('an unrecognised flag does not open a session', async () => {
+test('an unrecognised flag does not open a session', async (t) => {
   // The failure this prevents: exit 0 and a session against the wrong surface.
+  // Under TOON a session's key prints as `key: ...` with no quotes, so this
+  // must match the TOON form rather than a JSON-shaped one that can never fail.
+  await isolateHome(t);
   const result = await run({ argv: ['open', '--bse', 'main', '--no-browser'], cwd: process.cwd() });
   assert.equal(result.code, 2);
-  assert.equal(/"key"/.test(result.out), false, 'no session metadata may be printed');
+  assert.equal(/^key: /m.test(result.out), false, 'no session metadata may be printed');
 });
 
-test('--help on a verb describes only that verb', async () => {
+test('--help on a verb describes only that verb', async (t) => {
+  await isolateHome(t);
   const result = await run({ argv: ['reply', '--help'], cwd: process.cwd() });
   assert.equal(result.code, 0);
   assert.match(result.out, /usage: cr reply/);
@@ -414,6 +533,7 @@ test('--help on a verb describes only that verb', async () => {
 });
 
 test('open prints TOON by default and JSON under --json', async (t) => {
+  await isolateHome(t);
   const repo = await makeRepo({ 'a.js': 'one\n' });
   t.after(repo.cleanup);
   await repo.write('a.js', 'two\n');
@@ -428,7 +548,8 @@ test('open prints TOON by default and JSON under --json', async (t) => {
   assert.doesNotThrow(() => JSON.parse(json.out));
 });
 
-test('an error is a structured TOON error object carrying the prose', async () => {
+test('an error is a structured TOON error object carrying the prose', async (t) => {
+  await isolateHome(t);
   const result = await run({ argv: ['open', '--base=', '--no-browser'], cwd: process.cwd() });
   assert.equal(result.code, 1);
   assert.match(result.out, /^error:/m);
@@ -437,6 +558,7 @@ test('an error is a structured TOON error object carrying the prose', async () =
 });
 
 test('a clean tree is exit 1 with the nothing-to-review slug, not a bare exit code', async (t) => {
+  await isolateHome(t);
   const repo = await makeRepo({ 'a.js': 'one\n' });
   t.after(repo.cleanup);
 
@@ -446,6 +568,7 @@ test('a clean tree is exit 1 with the nothing-to-review slug, not a bare exit co
 });
 
 test('an unknown flag and a clean tree are told apart by exit code, not by prose', async (t) => {
+  await isolateHome(t);
   const repo = await makeRepo({ 'a.js': 'one\n' });
   t.after(repo.cleanup);
 
@@ -455,7 +578,8 @@ test('an unknown flag and a clean tree are told apart by exit code, not by prose
   assert.equal(bogus.code, 2);
 });
 
-test('an error under --json is parseable and keeps the same code and message', async () => {
+test('an error under --json is parseable and keeps the same code and message', async (t) => {
+  await isolateHome(t);
   const result = await run({ argv: ['open', '--base=', '--json', '--no-browser'], cwd: process.cwd() });
   assert.equal(result.code, 1);
   const parsed = JSON.parse(result.out);
@@ -463,7 +587,8 @@ test('an error under --json is parseable and keeps the same code and message', a
   assert.match(parsed.error.message, /--base needs a value/);
 });
 
-test('usage output stays plain text under both formats', async () => {
+test('usage output stays plain text under both formats', async (t) => {
+  await isolateHome(t);
   for (const argv of [['reply', '--help'], ['reply', '--help', '--json']]) {
     const result = await run({ argv, cwd: process.cwd() });
     assert.match(result.out, /usage: cr reply/);

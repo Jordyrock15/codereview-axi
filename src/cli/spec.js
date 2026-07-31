@@ -44,8 +44,11 @@ export const VERBS = {
   close: { summary: 'end the session', flags: [] },
 };
 
-/** Accepted everywhere, so no verb has to declare them. */
-const UNIVERSAL = ['help', 'json'];
+/**
+ * Accepted everywhere, so no verb has to declare them. All three are boolean:
+ * none takes a value.
+ */
+export const UNIVERSAL = ['help', 'json', 'version'];
 
 /**
  * @param {string} verb
@@ -57,6 +60,35 @@ export const unknownFlags = (verb, flags) => {
   if (!spec) return [];
   const declared = new Set([...UNIVERSAL, ...spec.flags.map((f) => f.name)]);
   return Object.keys(flags).filter((name) => !declared.has(name));
+};
+
+/**
+ * The boolean flag names in play for a verb: the universal ones plus any the
+ * verb declares with `arg: null`. `undefined` (verb not yet known) gives just
+ * the universal set, enough to find the verb itself without misreading it as
+ * a flag's value.
+ * @param {string} [verb]
+ * @returns {Set<string>}
+ */
+export const booleanFlagNames = (verb) => {
+  const spec = verb === undefined ? undefined : VERBS[verb];
+  return new Set([...UNIVERSAL, ...(spec ? spec.flags.filter((f) => f.arg === null).map((f) => f.name) : [])]);
+};
+
+/**
+ * A boolean flag declared with `arg: null` takes no value; catches
+ * `--json=true`, `--no-browser=false`, and anything else that hands one over.
+ * @param {string} verb
+ * @param {Record<string, string|boolean>} flags
+ * @returns {string|null} A message naming the offending flag, or null.
+ */
+export const checkArity = (verb, flags) => {
+  for (const name of booleanFlagNames(verb)) {
+    if (Object.hasOwn(flags, name) && flags[name] !== true) {
+      return `--${name} does not take a value`;
+    }
+  }
+  return null;
 };
 
 /**
@@ -83,6 +115,8 @@ export const USAGE = [
   'run `cr <verb> --help` for a verb\'s flags',
   '',
   'every verb accepts --json to print JSON instead of TOON',
+  '',
+  '--version prints the installed version and exits 0',
   '',
   'exit codes: 0 ok, 1 error, 2 unknown flag; the error code says which error',
 ].join('\n');

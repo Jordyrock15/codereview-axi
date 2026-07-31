@@ -9,11 +9,15 @@
 
 /**
  * @param {string[]} argv
+ * @param {Set<string>} [booleanFlags] Flags known to take no value, so a
+ *   following bare token is left as a positional rather than swallowed.
  * @returns {ParsedArgs}
  */
-export const parseArgs = (argv) => {
+export const parseArgs = (argv, booleanFlags = new Set()) => {
+  // A `{}` literal inherits Object.prototype, so `--__proto__ x` sets the
+  // prototype instead of an own key and unknownFlags() never sees it.
   /** @type {Record<string, string|boolean>} */
-  const flags = {};
+  const flags = Object.create(null);
   /** @type {string[]} */
   const positional = [];
   let verb = 'help';
@@ -26,6 +30,10 @@ export const parseArgs = (argv) => {
       const eq = body.indexOf('=');
       if (eq !== -1) {
         flags[body.slice(0, eq)] = body.slice(eq + 1);
+        continue;
+      }
+      if (booleanFlags.has(body)) {
+        flags[body] = true;
         continue;
       }
       const next = argv[i + 1];

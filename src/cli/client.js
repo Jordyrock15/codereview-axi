@@ -107,16 +107,19 @@ export const ensureServer = async () => {
   }
 
   // findPort proves a port free by binding, then releases it, so a concurrent
-  // starter can take it first. Retry rather than failing the command.
+  // starter can take it first. Retry rather than failing the command, and keep
+  // findPort inside the try: under parallel starts every port can look busy for
+  // an instant, and that must be retried too rather than escaping the loop.
   /** @type {unknown} */
   let lastErr;
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const port = await findPort(DEFAULT_PORT);
     try {
+      const port = await findPort(DEFAULT_PORT);
       await spawnDaemon(port);
       return port;
     } catch (err) {
       lastErr = err;
+      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
     }
   }
 
@@ -152,6 +155,6 @@ export const request = async (port, method, path, body, token) => {
   try {
     return { status: res.status, json: text === '' ? null : JSON.parse(text) };
   } catch {
-    throw new CliError(1, 'the cr server sent an unreadable response');
+    throw new CliError(1, 'the cr server sent an unreadable response', 'bad-response');
   }
 };

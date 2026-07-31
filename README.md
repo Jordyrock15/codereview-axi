@@ -44,11 +44,17 @@ usage: cr <verb> [flags]
 run `cr <verb> --help` for a verb's flags
 
 every verb accepts --json to print JSON instead of TOON
+
+--version prints the installed version and exits 0
 ```
 
 By default `open` reviews the working diff (`git diff HEAD`). `--base <ref>` reviews the current branch against `git diff $(git merge-base <ref> HEAD)` instead, so independent work on the base branch since it diverged stays out of the diff. `--pr <number>` resolves a pull request's base and head branch through `gh` and reviews it the same way as `--base <baseRefName>` would, but only if the current branch is already the PR's head: if it is not, `cr` refuses and prints the `git fetch`/`git checkout` command to run rather than checking out the branch itself. `--pr` and `--base` cannot be combined. `refresh` recomputes against whichever surface the session was opened with, and reopening a session with a different base or PR is refused rather than silently swapped.
 
 `--pr` needs `gh` on `PATH`, authenticated against GitHub. Without it, `--pr` exits 1 with a message saying so; use `--base` instead if `gh` is unavailable.
+
+`--version` prints the installed version and exits 0. It is accepted on any invocation and checked before the flag table, so it wins over everything else on the line, including an otherwise-unknown flag.
+
+An unknown verb is a structured error like any other, `code: usage`, so it is safe to parse under `--json` as well as TOON. An unknown *flag* (exit 2) is the one output that stays plain prose: there is no code to branch on, the exit code alone tells the two apart.
 
 ## Exit codes
 
@@ -58,7 +64,21 @@ By default `open` reviews the working diff (`git diff HEAD`). `--base <ref>` rev
 | 1 | Error; the structured error's `code` slug says which kind |
 | 2 | Unknown flag |
 
-Slugs seen under exit 1 include `usage` (the human typed something wrong, for example not a git worktree or a bad `--base`), `state` (the world is not in the right state, for example no open session), `nothing-to-review` (the working diff is empty) and `server-unreachable` (the server died mid-`wait` or never came up).
+Every exit-1 error is `{error: {code, message}}` in TOON or JSON. The slugs it uses:
+
+| Slug | Meaning |
+|---|---|
+| `usage` | the CLI's own argument checks: an unknown verb, a missing or malformed flag, a boolean flag given a value, a stray positional |
+| `state` | the world is not in the shape assumed, for example not inside a git worktree or no open session for this directory |
+| `nothing-to-review` | the diff being reviewed is empty |
+| `server-unreachable` | the server never came up, died mid-request, or cannot be reached over loopback |
+| `bad-response` | the server answered but the body could not be parsed |
+| `not-found` | no such session or resource on the server |
+| `session-closed` | the session has ended; terminal, do not retry |
+| `agent-waiting` | another agent already holds the poll on this session; retry later |
+| `invalid-input` | the server rejected the request body itself, for example an unrecognised `--status` value |
+| `conflict` | the request conflicts with the session's current state some other way, for example reopening with a different base, or replying to a comment that is not awaiting one |
+| `server-error` | the server rejected the request in a way none of the above covers |
 
 ## How the agent should drive it
 
@@ -68,9 +88,11 @@ Slugs seen under exit 1 include `usage` (the human typed something wrong, for ex
 4. `cr reply` per comment, then `cr refresh` to push a new snapshot; the tab updates over SSE and threads show the replies.
 5. Back to step 2. When the response carries `closed: true` with `closedBy: "human"`, the review is over: stop, and do not reopen the session uninvited.
 
-If the server dies mid-`wait`, `cr wait` exits 3 so the agent reports the failure rather than looping. Sent comments stay queued; re-running `wait` picks them up.
+If the server dies mid-`wait`, `cr wait` exits 1 with the `server-unreachable` slug so the agent reports the failure rather than looping. Sent comments stay queued; re-running `wait` picks them up.
 
 `wait` and `list` print each comment as `id`, `file`, `lines`, `verdict`, `body` and `quote` by default, the fields an agent acts on. `--fields all` asks for everything else too (`scope`, `status`, `agentReply`, `createdAt`, `updatedAt`), and `--fields id,quote` asks for a specific subset. `deliveredAt` is internal delivery bookkeeping and is never available, at any `--fields` value.
+
+`cr reply` prints a minimal confirmation instead: `id`, `status` and `counts` (the same tally `close` prints, `total` plus one entry per comment status present). The agent already knows the body it sent, so nothing else comes back.
 
 ## Security
 

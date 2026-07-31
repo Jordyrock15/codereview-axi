@@ -6,9 +6,11 @@ import { toplevel, currentBranch } from '../diff/git.js';
 import { loadState } from '../state/store.js';
 import { sessionKey } from '../state/sessions.js';
 import { shQuote } from '../shell.js';
-import { USAGE, verbHelp, unknownFlags } from './spec.js';
+import {
+  USAGE, verbHelp, unknownFlags, checkArity, booleanFlagNames,
+} from './spec.js';
 import { encode } from './toon.js';
-import { presentComment, selectFields, AGENT_COMMENT_FIELDS } from './present.js';
+import { presentComment, selectFields } from './present.js';
 
 export { USAGE } from './spec.js';
 
@@ -41,13 +43,42 @@ const fieldsFrom = (flags) => {
 };
 
 /**
+ * Every slug an exit-1 error can carry. The README documents each one, and a
+ * test asserts the two lists agree, so a new slug can't drift out of sync
+ * with the doc an agent is meant to read.
+ */
+export const ERROR_SLUGS = [
+  'usage', 'state', 'nothing-to-review', 'server-unreachable', 'bad-response',
+  'not-found', 'invalid-input', 'session-closed', 'agent-waiting', 'conflict', 'server-error',
+];
+
+/**
+ * Turns an HTTP status (and, for a 409, the message) into a slug an agent
+ * can branch on without parsing prose.
+ * @param {number} status
+ * @param {string} message
+ * @returns {string}
+ */
+const slugForStatus = (status, message) => {
+  if (status === 404) return 'not-found';
+  if (status === 400) return 'invalid-input';
+  if (status === 409) {
+    if (message.includes('session is closed')) return 'session-closed';
+    if (message.includes('another agent is waiting')) return 'agent-waiting';
+    return 'conflict';
+  }
+  return 'server-error';
+};
+
+/**
  * @param {{status: number, json: any}} res
  * @returns {any}
  */
 const unwrap = (res) => {
   if (res.status >= 200 && res.status < 300) return res.json;
   if (res.status === 422) throw new CliError(1, res.json?.error ?? 'nothing to review', 'nothing-to-review');
-  throw new CliError(1, res.json?.error ?? `request failed with ${res.status}`, 'state');
+  const message = res.json?.error ?? `request failed with ${res.status}`;
+  throw new CliError(1, message, slugForStatus(res.status, message));
 };
 
 /**
@@ -155,10 +186,10 @@ const HANDLERS = {
 
     const body = { id, status: flags.status, body: flags.body };
     const comment = unwrap(await request(port, 'POST', `/api/sessions/${key}/replies`, body, token));
-    // A single reply confirmation is not the volume concern the trimmed
-    // defaults exist for, so it keeps everything bar deliveredAt: the agent
-    // wants to see status flip to answered without a round trip.
-    return presentComment(comment, AGENT_COMMENT_FIELDS);
+    // The agent just wrote the body; echoing it back is pure cost. counts
+    // tells it whether anything else still awaits a reply, matching close.
+    const session = unwrap(await request(port, 'GET', `/api/sessions/${key}`, undefined, token));
+    return { id: comment.id, status: comment.status, counts: commentCounts(session.comments) };
   },
 
   refresh: async ({ cwd, port }) => {
@@ -217,12 +248,21 @@ const forDisplay = (value) => {
  * @returns {Promise<{code: number, out: string}>}
  */
 export const run = async ({ argv, cwd, resolvePr = defaultResolvePr }) => {
-  const { verb, flags } = parseArgs(argv);
+  // A first, loose pass just to find the verb: only then do we know which
+  // flags on this line are boolean, so a second pass can parse properly.
+  const probeVerb = parseArgs(argv, booleanFlagNames()).verb;
+  const { verb, flags, positional } = parseArgs(argv, booleanFlagNames(probeVerb));
+
+  const asText = (/** @type {unknown} */ value) => (
+    flags.json === true ? JSON.stringify(value, null, 2) : encode(/** @type {any} */ (value))
+  );
+  /** @param {CliError} err */
+  const fail = (err) => ({ code: err.code, out: asText({ error: { code: err.slug, message: err.message } }) });
 
   if (verb === 'help') return { code: 0, out: USAGE };
 
   const handler = HANDLERS[verb];
-  if (!handler) return { code: 1, out: `unknown verb "${verb}"\n\n${USAGE}` };
+  if (!handler) return fail(new CliError(1, `unknown verb "${verb}"`, 'usage'));
 
   if (flags.help === true) return { code: 0, out: verbHelp(verb) };
 
@@ -232,9 +272,12 @@ export const run = async ({ argv, cwd, resolvePr = defaultResolvePr }) => {
     return { code: 2, out: `unknown ${unknown.length === 1 ? 'flag' : 'flags'} ${named}\n\n${verbHelp(verb)}` };
   }
 
-  const asText = (/** @type {unknown} */ value) => (
-    flags.json === true ? JSON.stringify(value, null, 2) : encode(/** @type {any} */ (value))
-  );
+  const arityMessage = checkArity(verb, flags);
+  if (arityMessage) return fail(new CliError(1, arityMessage, 'usage'));
+
+  if (positional.length > 0) {
+    return fail(new CliError(1, `cr ${verb} takes no positional arguments, got "${positional[0]}"`, 'usage'));
+  }
 
   try {
     const port = await ensureServer();

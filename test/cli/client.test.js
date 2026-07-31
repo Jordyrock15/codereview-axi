@@ -123,3 +123,25 @@ test('request throws a CliError with the server-unreachable slug when the server
     return true;
   });
 });
+
+test('request throws a CliError with the bad-response slug on an unparseable body', async (t) => {
+  await withHome(t);
+  const { request, CliError } = await import('../../src/cli/client.js');
+
+  // The server answered, so this is not "unreachable": a body this CLI
+  // cannot understand needs a slug of its own rather than reusing that one.
+  const garbled = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end('not json');
+  });
+  garbled.listen(45471, '127.0.0.1');
+  await once(garbled, 'listening');
+  t.after(() => new Promise((resolve) => garbled.close(resolve)));
+
+  await assert.rejects(() => request(45471, 'GET', '/api/health'), (err) => {
+    assert.ok(err instanceof CliError);
+    assert.equal(err.code, 1);
+    assert.equal(err.slug, 'bad-response');
+    return true;
+  });
+});

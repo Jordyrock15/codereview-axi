@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { VERBS, verbHelp, unknownFlags, USAGE } from '../../src/cli/spec.js';
+import {
+  VERBS, verbHelp, unknownFlags, USAGE, checkArity, booleanFlagNames,
+} from '../../src/cli/spec.js';
 
 test('every verb the CLI dispatches has a spec entry', async () => {
   const { COMMANDS } = await import('../../src/cli/commands.js');
@@ -29,4 +31,27 @@ test('verbHelp names only that verb', () => {
 
 test('USAGE lists every verb', () => {
   for (const verb of Object.keys(VERBS)) assert.match(USAGE, new RegExp(`\\b${verb}\\b`));
+});
+
+test('booleanFlagNames includes the universal flags plus the verb\'s own', () => {
+  assert.deepEqual([...booleanFlagNames('open')].sort(), ['help', 'json', 'no-browser', 'version'].sort());
+  assert.deepEqual([...booleanFlagNames('reply')].sort(), ['help', 'json', 'version'].sort());
+});
+
+test('booleanFlagNames with no verb gives just the universal set', () => {
+  assert.deepEqual([...booleanFlagNames()].sort(), ['help', 'json', 'version'].sort());
+});
+
+test('checkArity accepts a boolean flag with no value or with true', () => {
+  assert.equal(checkArity('open', { 'no-browser': true }), null);
+  assert.equal(checkArity('open', {}), null);
+});
+
+test('checkArity rejects a value on a flag declared with no argument', () => {
+  assert.match(/** @type {string} */ (checkArity('open', { 'no-browser': 'false' })), /--no-browser/);
+  assert.match(/** @type {string} */ (checkArity('list', { json: 'true' })), /--json/);
+});
+
+test('checkArity does not flag a valued flag with a real value', () => {
+  assert.equal(checkArity('open', { note: 'hello' }), null);
 });
