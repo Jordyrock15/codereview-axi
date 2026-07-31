@@ -51,17 +51,19 @@ const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
  * @returns {Promise<string>}
  */
 export const mergeBase = async (repo, base) => {
+  let out;
   try {
-    const out = await git(repo, ['merge-base', base, 'HEAD']);
-    const sha = out.trim();
-    if (sha === '') throw new Error(`no common history between ${base} and HEAD`);
-    return sha;
+    out = await git(repo, ['merge-base', base, 'HEAD']);
   } catch (/** @type {any} */ err) {
-    // Some git versions reject on unrelated histories rather than resolving
-    // empty; empty stderr is what tells that apart from a genuine ref error.
-    if (err.stderr === '') throw new Error(`no common history between ${base} and HEAD`);
-    throw err;
+    // git exits 128 for a bad revision or ref, worth rethrowing as-is;
+    // anything else (unrelated histories exit 1) gets our own message.
+    if (err.code === 128) throw err;
+    throw new Error(`no common history between ${base} and HEAD`);
   }
+  const sha = out.trim();
+  // Some git versions resolve empty on unrelated histories rather than rejecting.
+  if (sha === '') throw new Error(`no common history between ${base} and HEAD`);
+  return sha;
 };
 
 /**

@@ -203,5 +203,11 @@ test('a path escaping with .. is refused', async (t) => {
   const repo = await makeRepo({ 'a.js': 'one\n' });
   t.after(repo.cleanup);
 
-  assert.equal(await readWorkingFile(repo.dir, '../escape.txt'), null);
+  const outside = path.join(path.dirname(repo.dir), `cr-escape-${process.pid}.txt`);
+  await writeFile(outside, 'SECRET\n');
+  t.after(() => rm(outside, { force: true }));
+
+  const result = await readWorkingFile(repo.dir, `../${path.basename(outside)}`);
+  assert.notEqual(result, 'SECRET\n');
+  assert.equal(result, null);
 });
