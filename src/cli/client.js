@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { readFile, rm } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { serverPath } from '../paths.js';
 import { readServerFile, findPort, DEFAULT_PORT } from '../server/index.js';
 
@@ -63,8 +64,11 @@ export const shutdown = async (port, pid) => {
  * @returns {Promise<void>}
  */
 const spawnDaemon = async (port) => {
-  const entry = new URL('../server/daemon.js', import.meta.url);
-  const child = spawn(process.execPath, [entry.pathname], {
+  // `URL.pathname` percent-encodes (a space becomes `%20`), which is not a
+  // filesystem path: installed under a directory containing one, the daemon
+  // would be spawned against a path that does not exist.
+  const entry = fileURLToPath(new URL('../server/daemon.js', import.meta.url));
+  const child = spawn(process.execPath, [entry], {
     detached: true,
     stdio: 'ignore',
     env: { ...process.env, CR_PORT: String(port) },

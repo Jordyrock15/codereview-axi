@@ -210,9 +210,10 @@ test('open --pr refuses when the current branch is not the PR head, and touches 
 
   assert.equal(result.code, 1);
   assert.match(result.out, /feature-x/);
-  // Single-quoted even for a plain name: the suggestion must be safe to paste
-  // regardless of what the PR head branch turns out to contain.
-  assert.match(result.out, /git fetch origin 'feature-x' && git checkout 'feature-x'/);
+  // Single-quoted even for a plain name, and `--` before the ref on both
+  // subcommands: the suggestion must be safe to paste regardless of what the
+  // PR head branch turns out to contain.
+  assert.match(result.out, /git fetch origin -- 'feature-x' && git switch -- 'feature-x'/);
 
   const after = {
     status: await repo.run(['status', '--porcelain']),
@@ -222,6 +223,27 @@ test('open --pr refuses when the current branch is not the PR head, and touches 
     reflog: await repo.run(['reflog']),
   };
   assert.deepEqual(after, before, '--pr must never fetch or check out');
+});
+
+test('open --pr refuses an option-shaped head branch rather than printing a command that would execute it', async (t) => {
+  const { run, repo } = await setup(t);
+  const resolvePr = async () => ({ base: 'main', head: '--upload-pack=/tmp/fake-upload-pack' });
+  const result = await run({
+    argv: ['open', '--pr', '7', '--no-browser', '--json'], cwd: repo.dir, resolvePr,
+  });
+
+  assert.equal(result.code, 1);
+  assert.equal(JSON.parse(result.out).error.code, 'invalid-input');
+  assert.doesNotMatch(result.out, /git fetch/, 'an option-shaped head must never reach the suggested command');
+});
+
+test('open --pr refuses a short-option-shaped head branch the same way', async (t) => {
+  const { run, repo } = await setup(t);
+  const resolvePr = async () => ({ base: 'main', head: '-x' });
+  const result = await run({ argv: ['open', '--pr', '7', '--no-browser', '--json'], cwd: repo.dir, resolvePr });
+
+  assert.equal(result.code, 1);
+  assert.equal(JSON.parse(result.out).error.code, 'invalid-input');
 });
 
 test('open --pr 007 reports the normalised number, not the raw flag, in the refusal', async (t) => {
@@ -530,6 +552,15 @@ test('an unknown verb exits 1 as a structured error, parseable under --json', as
   const json = await cr(['frobnicate', '--json']);
   assert.equal(json.code, 1);
   assert.equal(JSON.parse(json.out).error.code, 'usage');
+});
+
+test('a verb named after an Object.prototype member is an unknown verb, not a crash', async (t) => {
+  const { cr } = await setup(t);
+  for (const verb of ['constructor', 'toString', 'hasOwnProperty', '__proto__']) {
+    const result = await cr([verb, '--json']);
+    assert.equal(result.code, 1, `"${verb}" must be refused cleanly`);
+    assert.equal(JSON.parse(result.out).error.code, 'usage');
+  }
 });
 
 test('help exits 0', async (t) => {
@@ -891,7 +922,10 @@ test('setup writes into the repo by default, and never touches the injected home
   assert.match(result.out, new RegExp(`path: ${path.join(realRepoDir, '.claude', 'settings.local.json')}`));
 
   const written = JSON.parse(await readFile(path.join(repo.dir, '.claude', 'settings.local.json'), 'utf8'));
-  assert.equal(written.hooks.SessionStart[0].hooks[0].command, 'cr');
+  // The installed command is an absolute interpreter plus script path, not a
+  // bare `cr` resolved through PATH at session-start time: see Important 3.
+  assert.match(written.hooks.SessionStart[0].hooks[0].command, /bin\/cr\.js/);
+  assert.doesNotMatch(written.hooks.SessionStart[0].hooks[0].command, /^cr$/);
   await assert.rejects(() => readFile(path.join(fakeHome, '.claude', 'settings.json')), 'homedir must be untouched by the non-global branch');
 });
 
@@ -916,11 +950,38 @@ test('setup --global writes into the injected homedir, never the real one', asyn
   assert.match(result.out, new RegExp(`path: ${path.join(fakeHome, '.claude', 'settings.json')}`));
 
   const written = JSON.parse(await readFile(path.join(fakeHome, '.claude', 'settings.json'), 'utf8'));
-  assert.equal(written.hooks.SessionStart[0].hooks[0].command, 'cr');
+  assert.match(written.hooks.SessionStart[0].hooks[0].command, /bin\/cr\.js/);
   await assert.rejects(
     () => readFile(path.join(repo.dir, '.claude', 'settings.local.json')),
     'the global branch must not also write the repo-local file',
   );
+});
+
+test('setup installs a marked hook and a second run recognises it even if an unrelated hook already uses the command text', async (t) => {
+  await isolateHome(t);
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+
+  const first = await run({ argv: ['setup'], cwd: repo.dir });
+  assert.match(first.out, /action: added/);
+  const settingsPath = path.join(repo.dir, '.claude', 'settings.local.json');
+  const afterFirst = await readFile(settingsPath, 'utf8');
+
+  const second = await run({ argv: ['setup'], cwd: repo.dir });
+  assert.match(second.out, /action: already-present/);
+  assert.equal(await readFile(settingsPath, 'utf8'), afterFirst, 'a second run must not rewrite the file');
+});
+
+test('setup writes the settings file at mode 0600, not the default 0644', async (t) => {
+  await isolateHome(t);
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+
+  await run({ argv: ['setup'], cwd: repo.dir });
+  const settingsPath = path.join(repo.dir, '.claude', 'settings.local.json');
+  const { stat } = await import('node:fs/promises');
+  const mode = (await stat(settingsPath)).mode & 0o777;
+  assert.equal(mode, 0o600);
 });
 
 test('bare cr with an unknown flag is refused, not treated as a status glance', async (t) => {

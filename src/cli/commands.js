@@ -1,10 +1,13 @@
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from './args.js';
 import { ensureServer, request, CliError } from './client.js';
 import { openUrl } from './browser.js';
 import { resolvePr as defaultResolvePr, parsePrNumber } from './pr.js';
-import { toplevel, currentBranch } from '../diff/git.js';
+import {
+  toplevel, currentBranch, isOptionShaped,
+} from '../diff/git.js';
 import { loadState } from '../state/store.js';
 import { sessionKey } from '../state/sessions.js';
 import { shQuote } from '../shell.js';
@@ -157,6 +160,14 @@ const HANDLERS = {
         throw new CliError(1, err instanceof Error ? err.message : String(err), 'state');
       }
 
+      // `resolved.head` is attacker-controlled: it comes from `gh`, which is
+      // relaying whatever the PR author named their branch. A ref shaped like
+      // an option (`--upload-pack=...`) must never reach the suggested `git
+      // fetch` command below, quoting alone is not enough (see isOptionShaped).
+      if (isOptionShaped(resolved.head)) {
+        throw new CliError(1, `PR ${n}'s head branch "${resolved.head}" is not a valid ref name`, 'invalid-input');
+      }
+
       let branch;
       try {
         branch = await currentBranch(root);
@@ -170,7 +181,10 @@ const HANDLERS = {
       }
       if (branch !== resolved.head) {
         const head = shQuote(resolved.head);
-        throw new CliError(1, `PR ${n} reviews ${resolved.head}, but the current branch is ${branch}. Run: git fetch origin ${head} && git checkout ${head}`, 'state');
+        // `--` closes option parsing for both git subcommands: shQuote alone
+        // stops the shell, not git's own flag parser, and isOptionShaped above
+        // is a check, not a guarantee against every shape a future ref could take.
+        throw new CliError(1, `PR ${n} reviews ${resolved.head}, but the current branch is ${branch}. Run: git fetch origin -- ${head} && git switch -- ${head}`, 'state');
       }
 
       body.base = resolved.base;
@@ -281,8 +295,18 @@ const HANDLERS = {
       settingsPath = path.join(root, '.claude', 'settings.local.json');
     }
 
+    // A bare `cr` is resolved through PATH at session-start time, on every
+    // future session: a dependency shipping its own `cr` binary ahead on
+    // PATH would run silently, and a PATH change would fail the hook forever
+    // with nothing indicating what wrote it. The absolute interpreter plus
+    // script path is immune to both.
+    const binPath = fileURLToPath(new URL('../../bin/cr.js', import.meta.url));
+    // Both quoted: the hook command runs through a shell, and either path
+    // can contain a space (the same class of bug as the daemon spawn fix).
+    const command = `${shQuote(process.execPath)} ${shQuote(binPath)}`;
+
     try {
-      return await installHook(settingsPath, 'cr');
+      return await installHook(settingsPath, command);
     } catch (/** @type {any} */ err) {
       throw new CliError(1, err.message, 'state');
     }
@@ -372,7 +396,10 @@ export const run = async ({
   // every check below (unknown flag, arity, positional) applies to it same
   // as any other verb: decision 13 was unmet here precisely because this
   // path used to return before reaching them.
-  const handler = HANDLERS[verb];
+  // A plain object literal, like `HANDLERS` and `VERBS`, resolves `Object.prototype`
+  // members for a verb such as `constructor`, `toString` or `__proto__`'s own
+  // string form: `hasOwn` is required so those crash cleanly as "unknown verb".
+  const handler = Object.hasOwn(HANDLERS, verb) ? HANDLERS[verb] : undefined;
   if (verb !== 'help' && !handler) return fail(new CliError(1, `unknown verb "${verb}"`, 'usage'));
 
   if (verb === 'help') {
@@ -401,6 +428,11 @@ export const run = async ({
     const withHelp = flags['no-help'] === true ? live : { ...live, help: nextSteps(verb, live) };
     return { code: 0, out: asText(withHelp) };
   }
+
+  // Unreachable in practice: the hasOwn check above already failed any verb
+  // without a handler. Narrows `handler` for tsc, which cannot see across
+  // the two checks that every path reaching here has one.
+  if (!handler) return fail(new CliError(1, `unknown verb "${verb}"`, 'usage'));
 
   try {
     // setup touches Claude Code's own settings, not the review server, so it

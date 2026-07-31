@@ -5,10 +5,12 @@ import { promisify } from 'node:util';
 import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { makeRepo } from '../helpers/repo.js';
 
 const exec = promisify(execFile);
-const BIN = new URL('../../bin/cr.js', import.meta.url).pathname;
+// `URL.pathname` percent-encodes a space, which is not a filesystem path.
+const BIN = fileURLToPath(new URL('../../bin/cr.js', import.meta.url));
 
 /**
  * @param {string} cwd
@@ -87,6 +89,21 @@ test('exit 1 with the nothing-to-review slug for a clean working tree', async (t
   assert.equal(result.code, 1);
   assert.match(result.out, /nothing to review/);
   assert.equal(JSON.parse(result.out).error.code, 'nothing-to-review');
+});
+
+test('cr reply --body "--version" replies, it does not print the version', async (t) => {
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  /** @type {NodeJS.ProcessEnv} */
+  let env;
+  t.after(() => killDaemon(env));
+  t.after(repo.cleanup);
+
+  env = await home();
+  // argv[0] is 'reply', not '--version': only the first argument may switch
+  // the whole command to printing the version (see bin/cr.js).
+  const result = await runIn(repo.dir, ['reply', '--id', '1', '--status', 'fixed', '--body', '--version'], env);
+  assert.doesNotMatch(result.out, /^0\.1\.0$/m, 'the literal package version must never be what this prints');
+  assert.match(result.out, /no open session/, 'it should fail on the actual business rule (no open session), not short-circuit to --version');
 });
 
 test('exit 1 for a verb with no open session', async (t) => {

@@ -2,13 +2,17 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, cp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { makeRepo } from '../helpers/repo.js';
 
 const exec = promisify(execFile);
-const BIN = new URL('../../bin/cr.js', import.meta.url).pathname;
+// `URL.pathname` percent-encodes, so a directory containing a space would
+// make BIN a path that does not exist on disk.
+const BIN = fileURLToPath(new URL('../../bin/cr.js', import.meta.url));
+const PROJECT_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
 /**
  * Every `cr` call except `help` and an unknown verb spawns a real detached
@@ -252,6 +256,49 @@ test('a second agent waiting on the same session is refused', async (t) => {
 
   await post(port, opened.key, token, '/send');
   await first;
+});
+
+test('cr runs correctly when installed under a directory whose path contains a space', async (t) => {
+  // Reproduces the bug directly: client.js resolves the daemon entry point
+  // from import.meta.url, so the checkout's own location is what matters,
+  // not the repository under review. `URL.pathname` on a path with a space
+  // in it becomes `%20`, which is not a real filesystem path.
+  const spacedRoot = await mkdtemp(path.join(tmpdir(), 'cr install '));
+  t.after(() => rm(spacedRoot, { recursive: true, force: true }));
+  await cp(PROJECT_ROOT, spacedRoot, {
+    recursive: true,
+    filter: (src) => {
+      const rel = path.relative(PROJECT_ROOT, src);
+      const top = rel.split(path.sep)[0];
+      return !['node_modules', '.git', 'test', 'docs'].includes(top);
+    },
+  });
+  const spacedBin = path.join(spacedRoot, 'bin', 'cr.js');
+
+  const home = await mkdtemp(path.join(tmpdir(), 'cr-home-'));
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.write('a.js', 'ONE\n');
+  const env = { ...process.env, CODEREVIEW_AXI_HOME: home };
+
+  t.after(async () => {
+    try {
+      const { readFile } = await import('node:fs/promises');
+      const { pid, port } = JSON.parse(await readFile(path.join(home, 'server.json'), 'utf8'));
+      await fetch(`http://127.0.0.1:${port}/api/shutdown`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pid }),
+        signal: AbortSignal.timeout(1500),
+      }).catch(() => {});
+    } catch {
+      // no server.json: nothing was ever spawned
+    }
+  });
+
+  const { stdout } = await exec(process.execPath, [spacedBin, 'open', '--no-browser', '--json'], { cwd: repo.dir, env });
+  const opened = JSON.parse(stdout);
+  assert.equal(opened.reused, false);
 });
 
 test('a closed session is not resumed, and its comments do not come back', async (t) => {

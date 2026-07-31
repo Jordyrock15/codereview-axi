@@ -67,7 +67,7 @@ export const UNIVERSAL = ['help', 'json', 'version', 'no-help'];
  * @returns {string[]} The flag names this verb does not declare, in the order given.
  */
 export const unknownFlags = (verb, flags) => {
-  const spec = VERBS[verb];
+  const spec = Object.hasOwn(VERBS, verb) ? VERBS[verb] : undefined;
   if (!spec) return [];
   const declared = new Set([...UNIVERSAL, ...spec.flags.map((f) => f.name)]);
   return Object.keys(flags).filter((name) => !declared.has(name));
@@ -82,7 +82,7 @@ export const unknownFlags = (verb, flags) => {
  * @returns {Set<string>}
  */
 export const booleanFlagNames = (verb) => {
-  const spec = verb === undefined ? undefined : VERBS[verb];
+  const spec = verb === undefined || !Object.hasOwn(VERBS, verb) ? undefined : VERBS[verb];
   return new Set([...UNIVERSAL, ...(spec ? spec.flags.filter((f) => f.arg === null).map((f) => f.name) : [])]);
 };
 
@@ -107,7 +107,7 @@ export const checkArity = (verb, flags) => {
  * @returns {string}
  */
 export const verbHelp = (verb) => {
-  const spec = VERBS[verb];
+  const spec = Object.hasOwn(VERBS, verb) ? VERBS[verb] : undefined;
   if (!spec) return USAGE;
   const flags = spec.flags.map((f) => {
     const label = f.arg === null ? `--${f.name}` : `--${f.name} ${f.arg}`;

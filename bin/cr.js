@@ -4,7 +4,7 @@ import { run } from '../src/cli/commands.js';
 
 const argv = process.argv.slice(2);
 
-if (argv.includes('--version')) {
+if (argv[0] === '--version') {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   process.stdout.write(`${pkg.version}\n`);
   process.exit(0);

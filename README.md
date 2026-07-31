@@ -51,7 +51,7 @@ every verb appends help[] lines suggesting the next command; --no-help suppresse
 --version prints the installed version and exits 0
 ```
 
-By default `open` reviews the working diff (`git diff HEAD`). `--base <ref>` reviews the current branch against `git diff $(git merge-base <ref> HEAD)` instead, so independent work on the base branch since it diverged stays out of the diff. `--pr <number>` resolves a pull request's base and head branch through `gh` and reviews it the same way as `--base <baseRefName>` would, but only if the current branch is already the PR's head: if it is not, `cr` refuses and prints the `git fetch`/`git checkout` command to run rather than checking out the branch itself. `--pr` and `--base` cannot be combined. `refresh` recomputes against whichever surface the session was opened with, and reopening a session with a different base or PR is refused rather than silently swapped.
+By default `open` reviews the working diff (`git diff HEAD`). `--base <ref>` reviews the current branch against `git diff $(git merge-base <ref> HEAD)` instead, so independent work on the base branch since it diverged stays out of the diff. `--pr <number>` resolves a pull request's base and head branch through `gh` and reviews it the same way as `--base <baseRefName>` would, but only if the current branch is already the PR's head: if it is not, `cr` refuses and prints the `git fetch`/`git switch` command to run rather than checking out the branch itself. `--pr` and `--base` cannot be combined. `refresh` recomputes against whichever surface the session was opened with, and reopening a session with a different base or PR is refused rather than silently swapped.
 
 `--pr` needs `gh` on `PATH`, authenticated against GitHub. Without it, `--pr` exits 1 with a message saying so; use `--base` instead if `gh` is unavailable.
 
@@ -61,7 +61,7 @@ An unknown verb is a structured error like any other, `code: usage`, so it is sa
 
 ## Ambient context
 
-`cr setup` installs a `SessionStart` hook, running `cr` with no arguments, into Claude Code's settings, so a fresh conversation starts already knowing a review is waiting instead of the agent having to think to ask. It is an explicit, human-run command, never something the tool does on its own: writing to a Claude Code configuration file unasked is not a review tool's business.
+`cr setup` installs a `SessionStart` hook, running this install's `cr` with no arguments via an absolute path rather than one resolved through `PATH`, into Claude Code's settings, so a fresh conversation starts already knowing a review is waiting instead of the agent having to think to ask. It is an explicit, human-run command, never something the tool does on its own: writing to a Claude Code configuration file unasked is not a review tool's business.
 
 By default it targets `.claude/settings.local.json` at the repository root, the personal, git-ignored settings file. `--global` targets `~/.claude/settings.json` instead, for every repository the human works in.
 
