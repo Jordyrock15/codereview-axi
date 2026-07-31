@@ -1,15 +1,52 @@
 :root {
-  --paper: #0e1417;
-  --paper-2: #121a1e;
-  --card: #172126;
-  --ink: #e7edef;
-  --mid: #8c9ba1;
-  --hair: #2a373d;
-  --accent: #d9a23f;
-  --add: #57b37c;
-  --add-bg: #16301f;
-  --del: #de7a63;
-  --del-bg: #331914;
+  /* Lavish's own ground, foreground, accent and semantic hues.
+     Values taken from lavish-axi's dist/chrome.css :root block. */
+  --ink-900: #0f1115;
+  --ink-800: #11141a;
+  --ink-700: #171a21;
+  --ink-600: #1c212b;
+  --steel-700: #2a2f3a;
+  --steel-600: #303745;
+  --steel-400: #8c96aa;
+  --cream-100: #f7f3ea;
+  --brass-500: #f4c95d;
+  --brass-400: #ffd877;
+  --brass-ink: #17130a;
+  --sage-900: #172419;
+  --sage-300: #8fe39e;
+  --rust-500: #f06464;
+
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+  --radius-pill: 999px;
+  --shadow-tooltip: 0 16px 44px rgba(0, 0, 0, 0.35);
+  --shadow-floating: 0 20px 70px rgba(0, 0, 0, 0.35);
+  --ease: cubic-bezier(0.2, 0.6, 0.2, 1);
+  --dur-fast: 120ms;
+  --dur: 180ms;
+  --dur-slow: 320ms;
+  --bar-h: 56px;
+
+  /* Our existing names, kept so the rest of the file did not need rewriting. */
+  --paper: var(--ink-900);
+  --paper-2: var(--ink-600);
+  /* Distinct from --hair: an elevated-surface tier one step above the border
+     colour, so an answered thread's border does not vanish into its own fill. */
+  --card: var(--steel-600);
+  --ink: var(--cream-100);
+  --mid: var(--steel-400);
+  --hair: var(--steel-700);
+  --accent: var(--brass-500);
+  --accent-hover: var(--brass-400);
+  --accent-ink: var(--brass-ink);
+  --add: var(--sage-300);
+  --add-bg: var(--sage-900);
+  --del: var(--rust-500);
+  /* Lavish only defines rust-500, no dark rust ground step; this mix keeps
+     the same luminance rust-500 would have against sage-900's own darkness. */
+  --del-bg: color-mix(in srgb, var(--rust-500) 16%, var(--ink-900));
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
@@ -26,12 +63,14 @@ body {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 10px 16px;
+  height: var(--bar-h);
+  padding: 0 16px;
   border-bottom: 1px solid var(--hair);
   position: sticky;
   top: 0;
-  background: var(--paper);
+  background: var(--ink-700);
   z-index: 2;
+  box-sizing: border-box;
 }
 
 #note { color: var(--mid); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -43,17 +82,21 @@ button {
   border: 1px solid var(--hair);
   background: transparent;
   color: var(--ink);
-  border-radius: 2px;
+  border-radius: var(--radius-md);
   cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease);
 }
 
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 button:disabled { color: var(--mid); cursor: default; }
-#send:not(:disabled) { background: var(--accent); border-color: var(--accent); color: #172126; }
+button:active:not(:disabled) { opacity: 0.85; }
+#send:not(:disabled) { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+#send:not(:disabled):hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 
-main { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); min-height: calc(100vh - 45px); }
+main { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); min-height: calc(100vh - var(--bar-h)); }
 
-#files { border-right: 1px solid var(--hair); padding: 12px; overflow-y: auto; }
+#files { border-right: 1px solid var(--hair); background: var(--paper-2); padding: 12px; overflow-y: auto; }
 
 #files button {
   display: flex;
@@ -61,6 +104,7 @@ main { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); mi
   gap: 8px;
   width: 100%;
   border: 0;
+  border-radius: var(--radius-sm);
   text-align: left;
   padding: 5px 6px;
   color: var(--mid);
@@ -78,10 +122,10 @@ main { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); mi
   padding: 8px 12px;
   border-bottom: 1px solid var(--hair);
   color: var(--mid);
-  /* Sticks within #diff, which scrolls; #bar is outside #diff so 0 is correct, not 45. */
+  /* Sticks within #diff, which scrolls; #bar is outside #diff so 0 is correct, not the bar height. */
   position: sticky;
   top: 0;
-  background: var(--paper);
+  background: var(--paper-2);
   z-index: 1;
 }
 
@@ -106,6 +150,7 @@ main { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); mi
 .thread {
   margin: 8px 12px 12px 88px;
   border: 1px solid var(--accent);
+  border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--accent) 12%, var(--paper));
   padding: 10px 12px;
 }
@@ -117,6 +162,8 @@ main { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); mi
 .thread .warn { color: var(--del); font-size: 12px; margin-top: 6px; }
 .thread .warn:empty { display: none; }
 
+.thread.composer { box-shadow: var(--shadow-floating); }
+
 .thread textarea {
   width: 100%;
   min-height: 60px;
@@ -124,12 +171,14 @@ main { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); mi
   background: var(--paper);
   color: var(--ink);
   border: 1px solid var(--hair);
+  border-radius: var(--radius-md);
   padding: 6px;
   resize: vertical;
 }
 
 .verdicts { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
-.verdicts button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #172126; }
+.verdicts button { border-radius: var(--radius-pill); }
+.verdicts button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .thread .actions { display: flex; gap: 6px; margin-top: 8px; }
 #stream[data-state="down"] { color: var(--del); }
 
@@ -137,3 +186,12 @@ main { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); mi
 .tok-string { color: #8fc9a8; }
 .tok-number { color: #d9a23f; }
 .tok-keyword { color: #7fb2d9; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
