@@ -93,6 +93,9 @@ export const nextSteps = (verb, payload) => {
   if (verb === 'open' || verb === 'refresh') return ['cr wait'];
   if (verb === 'wait') return ['cr wait', 'cr close'];
   if (verb === 'reply') return ['cr wait'];
+  // Live session state on a bare `cr`: same next moves as any other verb
+  // that just confirmed a session is open and comments may be pending.
+  if (verb === 'help') return ['cr wait', 'cr list --status open'];
   return ['cr open'];
 };
 
@@ -104,6 +107,9 @@ export const selectFields = (requested) => {
   if (requested === undefined) return DEFAULT_COMMENT_FIELDS;
   if (requested === 'all') return AGENT_COMMENT_FIELDS;
   const asked = requested.split(',').map((s) => s.trim()).filter((s) => s !== '');
+  if (asked.length === 0) {
+    throw new Error(`--fields needs at least one field, available: ${AGENT_COMMENT_FIELDS.join(', ')}`);
+  }
   const bad = asked.filter((f) => !AGENT_COMMENT_FIELDS.includes(f));
   if (bad.length > 0) {
     throw new Error(`unknown ${bad.length === 1 ? 'field' : 'fields'} ${bad.join(', ')}, available: ${AGENT_COMMENT_FIELDS.join(', ')}`);

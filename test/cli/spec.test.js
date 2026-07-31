@@ -6,7 +6,11 @@ import {
 
 test('every verb the CLI dispatches has a spec entry', async () => {
   const { COMMANDS } = await import('../../src/cli/commands.js');
-  assert.deepEqual(Object.keys(VERBS).sort(), Object.keys(COMMANDS).sort());
+  // Not the reverse: `help` has a spec entry (so the unknown-flag/arity/
+  // positional gate applies to it) without being a dispatched HANDLERS
+  // entry, since it is handled specially in run() rather than as a verb a
+  // human picks from the menu.
+  for (const verb of Object.keys(COMMANDS)) assert.ok(Object.hasOwn(VERBS, verb), `${verb} has no spec entry`);
 });
 
 test('unknownFlags names a flag the verb does not declare', () => {

@@ -61,6 +61,12 @@ test('selectFields defaults, accepts a subset, and refuses an unknown name', () 
   assert.throws(() => selectFields('id,nope'), /nope/);
 });
 
+test('selectFields refuses a selection that resolves to no fields at all', () => {
+  assert.throws(() => selectFields(''), /--fields needs at least one field/);
+  assert.throws(() => selectFields(' '), /--fields needs at least one field/);
+  assert.throws(() => selectFields(','), /--fields needs at least one field/);
+});
+
 test('every comment presents the same key set, so the tabular form stays valid', () => {
   const a = presentComment(comment, DEFAULT_COMMENT_FIELDS);
   const b = presentComment({ ...comment, id: 2, scope: 'session', file: null, side: null, startLine: null, endLine: null }, DEFAULT_COMMENT_FIELDS);

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { makeRepo } from '../helpers/repo.js';
@@ -417,6 +417,83 @@ test('reply requires id, status and body', async (t) => {
   assert.match(result.out, /--status/);
 });
 
+test('reply --body with no value is refused, same as omitting it, not swallowed as an empty body', async (t) => {
+  const { cr } = await setup(t);
+  await cr(['open']);
+  const result = await cr(['reply', '--id', '1', '--status', 'fixed', '--body']);
+  assert.equal(result.code, 1);
+  assert.match(result.out, /--body/);
+});
+
+test('list --status with no value is a usage error, not "no filter"', async (t) => {
+  const s = await openSessionWithComments(t, [
+    { body: 'one', verdict: 'fix' },
+    { body: 'two', verdict: 'fix' },
+  ]);
+
+  const result = await run({ argv: ['list', '--status'], cwd: s.repo.dir });
+  assert.equal(result.code, 1);
+  assert.match(result.out, /code: usage/);
+  assert.match(result.out, /--status needs a value/);
+});
+
+test('list --fields with no value is a usage error, not the default field set', async (t) => {
+  const s = await openSessionWithComments(t, [{ body: 'one', verdict: 'fix' }]);
+  const result = await run({ argv: ['list', '--fields'], cwd: s.repo.dir });
+  assert.equal(result.code, 1);
+  assert.match(result.out, /code: usage/);
+  assert.match(result.out, /--fields needs a value/);
+});
+
+test('wait --say with no value is a usage error, not a silently skipped note update', async (t) => {
+  const s = await openSessionWithComments(t, []);
+  const result = await run({ argv: ['wait', '--timeout', '1', '--say'], cwd: s.repo.dir });
+  assert.equal(result.code, 1);
+  assert.match(result.out, /code: usage/);
+  assert.match(result.out, /--say needs a value/);
+});
+
+test('open --note with no value is a usage error, not a silently empty note', async (t) => {
+  const { run, repo } = await setup(t);
+  const result = await run({ argv: ['open', '--no-browser', '--note'], cwd: repo.dir });
+  assert.equal(result.code, 1);
+  assert.match(result.out, /--note needs a value/);
+});
+
+test('wait --timeout with no value is a usage error, not a silent 1-second poll', async (t) => {
+  const s = await openSessionWithComments(t, []);
+  const result = await run({ argv: ['wait', '--timeout'], cwd: s.repo.dir });
+  assert.equal(result.code, 1);
+  assert.match(result.out, /code: usage/);
+  assert.match(result.out, /--timeout needs a value/);
+});
+
+test('wait --timeout abc is refused rather than turning into a hot loop against the server', async (t) => {
+  const s = await openSessionWithComments(t, []);
+  const started = Date.now();
+  const result = await run({ argv: ['wait', '--timeout', 'abc'], cwd: s.repo.dir });
+  const elapsed = Date.now() - started;
+
+  assert.equal(result.code, 1);
+  assert.match(result.out, /code: usage/);
+  assert.match(result.out, /--timeout must be a positive number/);
+  // The failure this prevents: NaN reaching setTimeout, which fires
+  // immediately, so a bug here would return in well under a second even
+  // though nothing was ever posted for the poll to catch.
+  assert.equal(elapsed < 5000, true);
+});
+
+test('wait --timeout 0 and a negative timeout are both refused as non-positive', async (t) => {
+  const s = await openSessionWithComments(t, []);
+  const zero = await run({ argv: ['wait', '--timeout', '0'], cwd: s.repo.dir });
+  assert.equal(zero.code, 1);
+  assert.match(zero.out, /--timeout must be a positive number/);
+
+  const negative = await run({ argv: ['wait', '--timeout', '-5'], cwd: s.repo.dir });
+  assert.equal(negative.code, 1);
+  assert.match(negative.out, /--timeout must be a positive number/);
+});
+
 test('close ends the session and a second close exits 1', async (t) => {
   const { cr } = await setup(t);
   await cr(['open']);
@@ -502,12 +579,54 @@ test("the README's usage block matches USAGE exactly, not by eye", async () => {
   assert.equal(readmeBlock, verbsOnly);
 });
 
+/**
+ * Every slug the source can actually produce, read out of the code itself
+ * rather than a second hand-written list: a new slug added to a `throw` and
+ * forgotten in `ERROR_SLUGS` must fail this, which a hand-written comparison
+ * cannot.
+ * @returns {Promise<Set<string>>}
+ */
+const slugsInSource = async () => {
+  const commands = await readFile(new URL('../../src/cli/commands.js', import.meta.url), 'utf8');
+  const client = await readFile(new URL('../../src/cli/client.js', import.meta.url), 'utf8');
+  const slugs = new Set();
+
+  // Every `new CliError(code, message, slug)` call, wherever it sits (bare,
+  // inside `fail(...)`, inside a ternary): capture up to the statement's
+  // trailing semicolon, then read the last quoted literal off the tail.
+  for (const src of [commands, client]) {
+    for (const m of src.matchAll(/new CliError\(([\s\S]*?)\);/g)) {
+      const literal = m[1].match(/'([a-z][a-z-]*)'\s*\)*\s*$/);
+      if (literal) slugs.add(literal[1]);
+    }
+  }
+
+  // slugForStatus's own return statements are the one case where a CliError
+  // call site passes a function result rather than a literal.
+  const fn = commands.match(/const slugForStatus = [\s\S]*?\n};/);
+  assert.ok(fn, 'slugForStatus must exist in commands.js for this test to read its slugs');
+  for (const m of fn[0].matchAll(/return '([a-z][a-z-]*)'/g)) slugs.add(m[1]);
+
+  // The catch-all in run() for a throw that never went through CliError.
+  const fallback = commands.match(/err\.slug : '([a-z][a-z-]*)'/);
+  assert.ok(fallback, 'run() must have a named fallback slug for a non-CliError throw');
+  slugs.add(fallback[1]);
+
+  return slugs;
+};
+
 test('every slug the code can emit is documented in the README, and vice versa', async () => {
   const readme = await readFile(new URL('../../README.md', import.meta.url), 'utf8');
   const documented = [...readme.matchAll(/^\| `([a-z-]+)` \|/gm)].map((m) => m[1]);
 
   assert.ok(documented.length > 0, 'README must have a slug table');
   assert.deepEqual([...ERROR_SLUGS].sort(), [...documented].sort());
+});
+
+test('ERROR_SLUGS is derived from what the source can actually throw, not a parallel hand-written list', async () => {
+  const fromSource = await slugsInSource();
+  assert.ok(fromSource.size > 0, 'the source scan must find at least one slug, or it is not scanning');
+  assert.deepEqual([...ERROR_SLUGS].sort(), [...fromSource].sort());
 });
 
 test('an unrecognised flag is refused rather than silently ignored', async (t) => {
@@ -640,6 +759,32 @@ test("every verb's real success payload encodes as TOON without throwing", async
   assert.doesNotThrow(() => encode(closed), 'close');
 });
 
+test('an empty --fields selection is a usage error on list, not a silently empty comment object', async (t) => {
+  const s = await openSessionWithComments(t, [{ body: 'one', verdict: 'fix' }]);
+
+  for (const value of ['', ' ', ',']) {
+    const result = await run({ argv: ['list', `--fields=${value}`], cwd: s.repo.dir });
+    assert.equal(result.code, 1, `--fields=${JSON.stringify(value)} must be refused`);
+    assert.match(result.out, /code: usage/);
+  }
+
+  // The worst outcome named in the finding: exit 0 with a comments array of
+  // empty objects, silently telling the agent it succeeded and got nothing.
+  const json = await run({ argv: ['list', '--fields=', '--json'], cwd: s.repo.dir });
+  assert.equal(json.code, 1);
+  assert.equal(JSON.parse(json.out).error.code, 'usage');
+});
+
+test('an empty --fields selection is a usage error on wait too', async (t) => {
+  const s = await openSessionWithComments(t, [{ body: 'one', verdict: 'fix' }]);
+
+  for (const value of ['', ' ', ',']) {
+    const result = await run({ argv: ['wait', '--timeout', '1', `--fields=${value}`], cwd: s.repo.dir });
+    assert.equal(result.code, 1, `--fields=${JSON.stringify(value)} must be refused`);
+    assert.match(result.out, /code: usage/);
+  }
+});
+
 test('list reports counts over the unfiltered set, so a filter shows what it excluded', async (t) => {
   const s = await openSessionWithComments(t, [
     { body: 'one', verdict: 'fix' },
@@ -725,6 +870,82 @@ test('bare cr does not start the server daemon', async (t) => {
   await run({ argv: [], cwd: repo.dir });
   // No server.json is written, because ensureServer was never called.
   await assert.rejects(() => readFile(path.join(String(process.env.CODEREVIEW_AXI_HOME), 'server.json')));
+});
+
+test('setup writes into the repo by default, and never touches the injected homedir', async (t) => {
+  await isolateHome(t);
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+
+  const fakeHome = await mkdtemp(path.join(tmpdir(), 'cr-fakehome-'));
+  const result = await run({
+    argv: ['setup'], cwd: repo.dir, homedir: () => fakeHome,
+  });
+
+  assert.equal(result.code, 0);
+  assert.match(result.out, /action: added/);
+  // The resolved path is part of the payload, so this is the seam itself
+  // speaking: without --global it must resolve inside the repo, never
+  // through the injected homedir.
+  const realRepoDir = await realpath(repo.dir);
+  assert.match(result.out, new RegExp(`path: ${path.join(realRepoDir, '.claude', 'settings.local.json')}`));
+
+  const written = JSON.parse(await readFile(path.join(repo.dir, '.claude', 'settings.local.json'), 'utf8'));
+  assert.equal(written.hooks.SessionStart[0].hooks[0].command, 'cr');
+  await assert.rejects(() => readFile(path.join(fakeHome, '.claude', 'settings.json')), 'homedir must be untouched by the non-global branch');
+});
+
+test('setup --global writes into the injected homedir, never the real one', async (t) => {
+  await isolateHome(t);
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+
+  const fakeHome = await mkdtemp(path.join(tmpdir(), 'cr-fakehome-'));
+  const result = await run({
+    argv: ['setup', '--global'], cwd: repo.dir, homedir: () => fakeHome,
+  });
+
+  assert.equal(result.code, 0);
+  assert.match(result.out, /action: added/);
+  // Same seam, the other arm: --global must resolve through the injected
+  // homedir, and the injected function is the only thing that can prove it,
+  // since nothing here ever calls the real os.homedir().
+  // Unlike repo.dir (resolved by git's `toplevel`), fakeHome is passed
+  // straight through path.join with no symlink resolution, so the raw value
+  // is what the payload must contain.
+  assert.match(result.out, new RegExp(`path: ${path.join(fakeHome, '.claude', 'settings.json')}`));
+
+  const written = JSON.parse(await readFile(path.join(fakeHome, '.claude', 'settings.json'), 'utf8'));
+  assert.equal(written.hooks.SessionStart[0].hooks[0].command, 'cr');
+  await assert.rejects(
+    () => readFile(path.join(repo.dir, '.claude', 'settings.local.json')),
+    'the global branch must not also write the repo-local file',
+  );
+});
+
+test('bare cr with an unknown flag is refused, not treated as a status glance', async (t) => {
+  await isolateHome(t);
+  const result = await run({ argv: ['--bogus'], cwd: tmpdir() });
+  assert.equal(result.code, 2);
+  assert.match(result.out, /unknown flag --bogus/);
+});
+
+test('bare cr --json=true is a usage error, not a silent TOON fallback', async (t) => {
+  await isolateHome(t);
+  const result = await run({ argv: ['--json=true'], cwd: tmpdir() });
+  assert.equal(result.code, 1);
+  assert.match(result.out, /code: usage/);
+  assert.match(result.out, /--json/);
+});
+
+test('bare cr --no-help suppresses help[] on live state, routed through the same suppression as every verb', async (t) => {
+  const s = await openSessionWithComments(t, [{ body: 'one', verdict: 'fix' }]);
+
+  const withHelp = await run({ argv: [], cwd: s.repo.dir });
+  assert.match(withHelp.out, /^help\[\d+\]: /m);
+
+  const without = await run({ argv: ['--no-help'], cwd: s.repo.dir });
+  assert.equal(/^help\[/m.test(without.out), false);
 });
 
 test('bare cr with --json gives live state as JSON, usage fallback stays plain text', async (t) => {

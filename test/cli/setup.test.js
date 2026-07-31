@@ -55,6 +55,20 @@ test('installHook refuses malformed JSON rather than overwriting it', async () =
   assert.equal(await readFile(p, 'utf8'), '{ not json', 'the file must be left alone');
 });
 
+test('installHook refuses a settings file that is valid JSON but not an object, rather than reporting "added" and writing nothing useful back', async () => {
+  for (const [label, contents] of /** @type {[string, string][]} */ ([
+    ['an array', '[]'],
+    ['null', 'null'],
+    ['a bare string', '"hello"'],
+    ['a bare number', '42'],
+  ])) {
+    const p = await settingsIn(null);
+    await writeFile(p, contents);
+    await assert.rejects(() => installHook(p, 'cr'), /does not contain a JSON object/, `${label} must be refused`);
+    assert.equal(await readFile(p, 'utf8'), contents, `${label}: the file must be left exactly as it was`);
+  }
+});
+
 test('installHook adds alongside an existing SessionStart hook rather than replacing it', async () => {
   const p = await settingsIn({
     hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'echo hello' }] }] },

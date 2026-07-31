@@ -48,6 +48,11 @@ export const VERBS = {
     summary: 'install a Claude Code hook so every session starts knowing about a review',
     flags: [{ name: 'global', arg: null, help: 'install into ~/.claude/settings.json instead of this repository' }],
   },
+  // Not a verb a human picks: it is what a bare `cr`, or the literal word
+  // `help`, resolves to. Declared here anyway so the same unknown-flag,
+  // arity and positional gate every other verb passes through applies to it
+  // too; excluded from the USAGE listing below since it is not a menu choice.
+  help: { summary: 'print usage, or live session state if one is open', flags: [] },
 };
 
 /**
@@ -111,12 +116,13 @@ export const verbHelp = (verb) => {
   return [`usage: cr ${verb} [flags]`, '', `  ${spec.summary}`, ...(flags.length ? ['', ...flags] : [])].join('\n');
 };
 
-const widest = Math.max(...Object.keys(VERBS).map((v) => v.length));
+const listedVerbs = Object.entries(VERBS).filter(([verb]) => verb !== 'help');
+const widest = Math.max(...listedVerbs.map(([verb]) => verb.length));
 
 export const USAGE = [
   'usage: cr <verb> [flags]',
   '',
-  ...Object.entries(VERBS).map(([verb, spec]) => `  ${verb.padEnd(widest + 2)} ${spec.summary}`),
+  ...listedVerbs.map(([verb, spec]) => `  ${verb.padEnd(widest + 2)} ${spec.summary}`),
   '',
   'run `cr <verb> --help` for a verb\'s flags',
   '',

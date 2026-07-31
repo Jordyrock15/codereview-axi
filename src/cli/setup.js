@@ -28,6 +28,15 @@ export const installHook = async (settingsPath, command) => {
     }
   }
 
+  // Valid JSON that is not a plain object (an array, null, a bare string or
+  // number) parses without throwing, so the guard above lets it through:
+  // `settings.hooks ??= {}` on an array silently attaches an own property
+  // JSON.stringify then drops, and on null or a string it throws a raw
+  // TypeError. Refuse it the same way malformed JSON is refused above.
+  if (typeof settings !== 'object' || settings === null || Array.isArray(settings)) {
+    throw new Error(`${settingsPath} does not contain a JSON object, fix or move it first`);
+  }
+
   settings.hooks ??= {};
   settings.hooks.SessionStart ??= [];
 

@@ -34,10 +34,47 @@ const resolveSession = async (cwd) => {
 };
 
 /**
+ * A flag declared with an `arg` in spec.js (so it expects a value) arrives as
+ * boolean `true` when given with nothing after it, indistinguishable from a
+ * genuine boolean flag. Left unchecked, that reads as "flag absent" to every
+ * caller downstream, so the narrower question the agent asked gets silently
+ * answered as if it had never asked at all.
+ * @param {Record<string, string|boolean>} flags
+ * @param {string} name
+ * @param {string} example
+ * @returns {void}
+ */
+const requireValue = (flags, name, example) => {
+  if (flags[name] === true) {
+    throw new CliError(1, `--${name} needs a value, for example --${name} ${example}`, 'usage');
+  }
+};
+
+/**
+ * `Number(true)` is `1`, finite and positive, so a bare `--timeout` with no
+ * value would sail through a numeric check alone; `requireValue` must run
+ * first. `Number("abc")` is `NaN`, which `setTimeout` fires on immediately,
+ * turning a mistyped timeout into a hot loop against the server rather than
+ * a poll.
+ * @param {Record<string, string|boolean>} flags
+ * @returns {number}
+ */
+const parseTimeout = (flags) => {
+  requireValue(flags, 'timeout', '300');
+  if (flags.timeout === undefined) return 300;
+  const n = Number(flags.timeout);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new CliError(1, `--timeout must be a positive number of seconds, got "${flags.timeout}"`, 'usage');
+  }
+  return n;
+};
+
+/**
  * @param {Record<string, string|boolean>} flags
  * @returns {string[]}
  */
 const fieldsFrom = (flags) => {
+  requireValue(flags, 'fields', 'id,body,quote');
   try {
     return selectFields(typeof flags.fields === 'string' ? flags.fields : undefined);
   } catch (err) {
@@ -52,7 +89,7 @@ const fieldsFrom = (flags) => {
  */
 export const ERROR_SLUGS = [
   'usage', 'state', 'nothing-to-review', 'server-unreachable', 'bad-response',
-  'not-found', 'invalid-input', 'session-closed', 'agent-waiting', 'conflict', 'server-error',
+  'not-found', 'invalid-input', 'session-closed', 'agent-waiting', 'conflict', 'server-error', 'error',
 ];
 
 /**
@@ -88,7 +125,7 @@ const unwrap = (res) => {
  * @typedef {(number: number|string, options?: {run?: (args: string[], cwd?: string) => Promise<string>, cwd?: string}) => Promise<{base: string, head: string}>} ResolvePr
  */
 
-/** @type {Record<string, (input: {flags: Record<string, string|boolean>, cwd: string, port: number, resolvePr: ResolvePr}) => Promise<unknown>>} */
+/** @type {Record<string, (input: {flags: Record<string, string|boolean>, cwd: string, port: number, resolvePr: ResolvePr, homedir: () => string}) => Promise<unknown>>} */
 const HANDLERS = {
   open: async ({ flags, cwd, port, resolvePr }) => {
     const root = await toplevel(cwd);
@@ -100,6 +137,7 @@ const HANDLERS = {
     if (flags.base !== undefined && (typeof flags.base !== 'string' || flags.base === '')) {
       throw new CliError(1, '--base needs a value, for example --base main', 'usage');
     }
+    requireValue(flags, 'note', '"refactored the payout splitter"');
 
     /** @type {{repo: string, note: string, base?: string, pr?: number}} */
     const body = { repo: root, note: typeof flags.note === 'string' ? flags.note : '' };
@@ -151,7 +189,8 @@ const HANDLERS = {
 
   wait: async ({ flags, cwd, port }) => {
     const { key, token } = await resolveSession(cwd);
-    const timeout = Number(flags.timeout ?? 300);
+    const timeout = parseTimeout(flags);
+    requireValue(flags, 'say', '"check the rounding first"');
 
     // --say is the agent talking to the human, so it updates the note the tab
     // header shows. Posting it as a comment would send it straight back.
@@ -179,6 +218,7 @@ const HANDLERS = {
 
   list: async ({ flags, cwd, port }) => {
     const { key, token } = await resolveSession(cwd);
+    requireValue(flags, 'status', 'open');
     const fields = fieldsFrom(flags);
     const limit = flags.full === true ? Infinity : undefined;
     const session = unwrap(await request(port, 'GET', `/api/sessions/${key}`, undefined, token));
@@ -231,10 +271,10 @@ const HANDLERS = {
 
   // Deliberately no `port` in scope: this touches Claude Code's own settings,
   // nothing to do with the review server, so it must never start one.
-  setup: async ({ flags, cwd }) => {
+  setup: async ({ flags, cwd, homedir }) => {
     let settingsPath;
     if (flags.global === true) {
-      settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
+      settingsPath = path.join(homedir(), '.claude', 'settings.json');
     } else {
       const root = await toplevel(cwd);
       if (root === null) throw new CliError(1, `${cwd} is not inside a git worktree`, 'state');
@@ -302,17 +342,20 @@ const liveState = async (cwd) => {
     pr: session.pr ?? '',
     unsent: session.comments.filter((/** @type {{status: string}} */ c) => c.status === 'open').length,
     counts: commentCounts(session.comments),
-    help: ['cr wait', 'cr list --status open'],
   };
 };
 
 /**
  * `resolvePr` is injectable so tests can drive the `--pr` wiring without a
  * real `gh` on PATH, the same seam `resolvePr` itself uses for `gh`.
- * @param {{argv: string[], cwd: string, env?: NodeJS.ProcessEnv, resolvePr?: ResolvePr}} input
+ * `homedir` is injectable so `cr setup --global` can be exercised against a
+ * throwaway directory instead of a developer's real home.
+ * @param {{argv: string[], cwd: string, env?: NodeJS.ProcessEnv, resolvePr?: ResolvePr, homedir?: () => string}} input
  * @returns {Promise<{code: number, out: string}>}
  */
-export const run = async ({ argv, cwd, resolvePr = defaultResolvePr }) => {
+export const run = async ({
+  argv, cwd, resolvePr = defaultResolvePr, homedir = os.homedir,
+}) => {
   // A first, loose pass just to find the verb: only then do we know which
   // flags on this line are boolean, so a second pass can parse properly.
   const probeVerb = parseArgs(argv, booleanFlagNames()).verb;
@@ -324,21 +367,25 @@ export const run = async ({ argv, cwd, resolvePr = defaultResolvePr }) => {
   /** @param {CliError} err */
   const fail = (err) => ({ code: err.code, out: asText({ error: { code: err.slug, message: err.message } }) });
 
+  // `help` is not a real handler: it is what a bare `cr`, or the literal
+  // word `help`, resolves to (see parseArgs). It still has a VERBS entry, so
+  // every check below (unknown flag, arity, positional) applies to it same
+  // as any other verb: decision 13 was unmet here precisely because this
+  // path used to return before reaching them.
+  const handler = HANDLERS[verb];
+  if (verb !== 'help' && !handler) return fail(new CliError(1, `unknown verb "${verb}"`, 'usage'));
+
   if (verb === 'help') {
     if (flags.help === true) return { code: 0, out: USAGE };
-    const live = await liveState(cwd);
-    return { code: 0, out: live === null ? USAGE : asText(live) };
+  } else if (flags.help === true) {
+    return { code: 0, out: verbHelp(verb) };
   }
-
-  const handler = HANDLERS[verb];
-  if (!handler) return fail(new CliError(1, `unknown verb "${verb}"`, 'usage'));
-
-  if (flags.help === true) return { code: 0, out: verbHelp(verb) };
 
   const unknown = unknownFlags(verb, flags);
   if (unknown.length > 0) {
     const named = unknown.map((f) => `--${f}`).join(', ');
-    return { code: 2, out: `unknown ${unknown.length === 1 ? 'flag' : 'flags'} ${named}\n\n${verbHelp(verb)}` };
+    const help = verb === 'help' ? USAGE : verbHelp(verb);
+    return { code: 2, out: `unknown ${unknown.length === 1 ? 'flag' : 'flags'} ${named}\n\n${help}` };
   }
 
   const arityMessage = checkArity(verb, flags);
@@ -348,12 +395,19 @@ export const run = async ({ argv, cwd, resolvePr = defaultResolvePr }) => {
     return fail(new CliError(1, `cr ${verb} takes no positional arguments, got "${positional[0]}"`, 'usage'));
   }
 
+  if (verb === 'help') {
+    const live = await liveState(cwd);
+    if (live === null) return { code: 0, out: USAGE };
+    const withHelp = flags['no-help'] === true ? live : { ...live, help: nextSteps(verb, live) };
+    return { code: 0, out: asText(withHelp) };
+  }
+
   try {
     // setup touches Claude Code's own settings, not the review server, so it
     // must not start a daemon as a side effect of installing a hook.
     const port = verb === 'setup' ? -1 : await ensureServer();
     const result = await handler({
-      flags, cwd, port, resolvePr,
+      flags, cwd, port, resolvePr, homedir,
     });
     const payload = /** @type {Record<string, unknown>} */ (forDisplay(result));
     const withHelp = flags['no-help'] === true
