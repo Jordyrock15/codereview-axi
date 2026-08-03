@@ -72,7 +72,15 @@ export const writeServerFile = async (info) => {
  */
 export const startServer = async (options = {}) => {
   const port = options.port ?? (await findPort(DEFAULT_PORT));
-  const app = createApp({ port, now: options.now });
+  // close is defined below, so the app gets an indirection rather than the
+  // function itself. The app owns the delay and the re-check.
+  /** @type {() => Promise<void>} */
+  let stop = async () => {};
+  const app = createApp({
+    port,
+    now: options.now,
+    onIdle: () => { void stop(); },
+  });
   const currentVersion = await version();
 
   const server = http.createServer((req, res) => {
@@ -157,5 +165,6 @@ export const startServer = async (options = {}) => {
     await new Promise((resolve) => server.close(() => resolve(undefined)));
   };
 
+  stop = close;
   return { port, close };
 };

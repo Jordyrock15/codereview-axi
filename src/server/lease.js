@@ -5,13 +5,35 @@ import { StateError } from '../state/errors.js';
 export const LEASE_TTL_MS = 15 * 60 * 1000;
 
 /**
+ * Whether a pid is still running. Signal 0 checks for existence without
+ * delivering anything; EPERM means the process is there but owned by someone
+ * else, which still counts as alive.
+ * @param {number} pid
+ * @returns {boolean}
+ */
+const alive = (pid) => {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return /** @type {NodeJS.ErrnoException} */ (err).code === 'EPERM';
+  }
+};
+
+/**
  * @param {Session} session
  * @param {number} now
  * @returns {number|null}
  */
 export const leaseHolder = (session, now) => {
   if (!session.lease) return null;
-  return Date.parse(session.lease.expiresAt) > now ? session.lease.holder : null;
+  if (Date.parse(session.lease.expiresAt) <= now) return null;
+  // A poll may legitimately run for the full TTL, so the clock alone cannot
+  // tell a live holder from a killed one. The holder is a local pid (the
+  // server is loopback-only), so its absence is proof the lease is abandoned;
+  // without this, one killed `cr wait` locks the session out for 15 minutes.
+  return alive(session.lease.holder) ? session.lease.holder : null;
 };
 
 /**

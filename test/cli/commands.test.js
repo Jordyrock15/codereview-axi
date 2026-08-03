@@ -481,7 +481,15 @@ test('wait exits 1 with the agent-waiting slug when another pid already holds th
   const { port } = /** @type {{pid: number, port: number, version: string}} */ (await readServerFile());
   const { token } = (await loadState()).sessions[opened.key];
 
-  const held = request(port, 'GET', `/api/sessions/${opened.key}/pending?holder=999111&timeout=5`, undefined, token);
+  // A lease is only honoured while its holder is running, so the other holder
+  // has to be a real process. It also cannot be this one: `cr` here runs
+  // in-process, so process.pid would read as the same holder retaking its own
+  // lease, which is allowed and would prove nothing.
+  const { spawn } = await import('node:child_process');
+  const other = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
+  t.after(() => other.kill());
+
+  const held = request(port, 'GET', `/api/sessions/${opened.key}/pending?holder=${other.pid}&timeout=5`, undefined, token);
   await new Promise((resolve) => setTimeout(resolve, 100));
 
   const result = await cr(['wait', '--timeout', '1']);

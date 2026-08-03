@@ -71,10 +71,12 @@ test('a waiting poll is woken by a send', async (t) => {
 
 test('a second holder polling a leased session gets 409', async (t) => {
   const { call, at } = await setup(t);
-  const first = call('GET', at('/pending?holder=111&timeout=5'));
+  // holder must be a pid that is actually running: a lease whose holder has
+  // exited is treated as free, which is the point of the liveness check.
+  const first = call('GET', at(`/pending?holder=${process.pid}&timeout=5`));
   await new Promise((resolve) => setTimeout(resolve, 100));
 
-  const second = await call('GET', at('/pending?holder=222&timeout=5'));
+  const second = await call('GET', at(`/pending?holder=${process.pid + 1}&timeout=5`));
   assert.equal(second.status, 409);
   assert.match(second.json.error, /another agent is waiting/);
 

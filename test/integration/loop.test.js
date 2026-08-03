@@ -247,7 +247,7 @@ test('a second agent waiting on the same session is refused', async (t) => {
   const port = await portFor(env);
   const token = await tokenFor(env, opened.key);
 
-  const first = fetch(`http://127.0.0.1:${port}/api/sessions/${opened.key}/pending?holder=111&timeout=5`, {
+  const first = fetch(`http://127.0.0.1:${port}/api/sessions/${opened.key}/pending?holder=${process.pid}&timeout=5`, {
     headers: { 'x-cr-token': token },
   });
   await new Promise((resolve) => setTimeout(resolve, 150));
@@ -318,4 +318,46 @@ test('a closed session is not resumed, and its comments do not come back', async
   assert.equal(second.reused, false);
   assert.deepEqual(second.comments, []);
   assert.notEqual(await tokenFor(env, second.key), token);
+});
+
+test('closing the last open session stops the daemon', async (t) => {
+  const { cr, env } = await setup(t);
+  await cr(['open']);
+  const port = await portFor(env);
+
+  // Alive before the close, so a dead port afterwards means the close stopped
+  // it rather than it never having been up.
+  const before = await fetch(`http://127.0.0.1:${port}/api/health`);
+  assert.equal(before.status, 200);
+
+  await cr(['close']);
+
+  // The stop is deferred and re-checked, so poll rather than assert instantly.
+  let reachable = true;
+  for (let i = 0; i < 40 && reachable; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    try {
+      await fetch(`http://127.0.0.1:${port}/api/health`);
+    } catch {
+      reachable = false;
+    }
+  }
+  assert.equal(reachable, false, 'a finished review must not leave a daemon behind');
+});
+
+test('a second open keeps the daemon that a close had queued to stop', async (t) => {
+  const { cr, env } = await setup(t);
+  await cr(['open']);
+  const port = await portFor(env);
+
+  // The stop is scheduled by the close and decided 250ms later, so opening
+  // inside that window must call it off: this is ordinary use, and deciding at
+  // schedule time shot the daemon out from under the new session.
+  await cr(['close']);
+  await cr(['open']);
+  await new Promise((resolve) => setTimeout(resolve, 600));
+
+  const res = await fetch(`http://127.0.0.1:${await portFor(env)}/api/health`);
+  assert.equal(res.status, 200);
+  assert.equal(await portFor(env), port, 'the same daemon, not a replacement');
 });

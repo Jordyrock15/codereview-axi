@@ -27,7 +27,7 @@
   --dur-fast: 120ms;
   --dur: 180ms;
   --dur-slow: 320ms;
-  --bar-h: 56px;
+  --bar-h: 82px;
 
   /* Our existing names, kept so the rest of the file did not need rewriting. */
   --paper: var(--ink-900);
@@ -52,6 +52,32 @@
 
 * { box-sizing: border-box; }
 
+/* The platform scrollbar is a light slab against these grounds. Firefox and
+   Safari only honour the standard properties; the -webkit- rules are what
+   Chrome actually paints, so both are needed rather than either alone. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--steel-600) transparent;
+}
+
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* The transparent border plus background-clip is what insets the thumb, so it
+   reads as a floating pill rather than filling the gutter edge to edge. */
+::-webkit-scrollbar-thumb {
+  background: var(--steel-600);
+  background-clip: content-box;
+  border: 2px solid transparent;
+  border-radius: var(--radius-pill);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--steel-400);
+  background-clip: content-box;
+}
+
 body {
   margin: 0;
   background: var(--paper);
@@ -59,10 +85,14 @@ body {
   font: 13px/1.5 var(--mono);
 }
 
+/* Two rows: the note had to share one line with every control, so a --note or
+   --say of any length was ellipsised to nothing. Height stays a constant
+   because main's height and the queue panel's anchor are both derived from it. */
 #bar {
   display: flex;
-  align-items: center;
-  gap: 16px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
   height: var(--bar-h);
   padding: 0 16px;
   border-bottom: 1px solid var(--hair);
@@ -70,7 +100,17 @@ body {
   box-sizing: border-box;
 }
 
-#note { color: var(--mid); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#bar-row { display: flex; align-items: center; gap: 16px; }
+
+/* #view is the first control that is always present, so it carries the push;
+   #activity and #counts can both be empty and would not hold the gap. */
+#bar-row > #view { margin-left: auto; }
+
+/* The identity never shrinks and the message takes what is left, so a long
+   --say ellipsises instead of pushing the branch name out of view. */
+#note { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+#ident { color: var(--ink); flex-shrink: 0; white-space: nowrap; }
+#say { color: var(--mid); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #counts { color: var(--mid); white-space: nowrap; display: flex; align-items: center; gap: 4px; }
 
 #queue-open[aria-expanded="true"] { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
@@ -139,7 +179,12 @@ main {
 #files .dir { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; opacity: 0.65; }
 #files .base { white-space: nowrap; flex-shrink: 0; }
 
-#files .count { color: var(--accent); flex-shrink: 0; white-space: nowrap; }
+/* Accent is left as the bare colour so it still applies to the open-comment
+   count, which replaces the tallies and is asking for attention rather than
+   reporting a size. The gap replaces the space the single string used to have. */
+#files .count { color: var(--accent); flex-shrink: 0; white-space: nowrap; display: flex; gap: 6px; }
+#files .count .added { color: var(--add); }
+#files .count .removed { color: var(--del); }
 
 #diff-wrap { position: relative; min-width: 0; height: 100%; overflow: hidden; }
 #diff { height: 100%; overflow: auto; }
@@ -192,7 +237,10 @@ main {
 
 .row { display: grid; grid-template-columns: 44px 44px minmax(0, 1fr); }
 .row > .n { color: var(--mid); text-align: right; padding: 0 8px; border-right: 1px solid var(--hair); cursor: pointer; user-select: none; }
-.row > .t { padding: 0 12px; white-space: pre; }
+/* pre-wrap, not pre: a prose file's lines run for hundreds of characters, and
+   horizontal scrolling to read a comment's own quote is worse than a soft
+   wrap. pre-wrap keeps leading indentation, which code review needs. */
+.row > .t { padding: 0 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .row.add > .t { background: var(--add-bg); color: var(--add); }
 .row.del > .t { background: var(--del-bg); color: var(--del); }
 .row.picked > .t { box-shadow: inset 3px 0 0 var(--accent); }
