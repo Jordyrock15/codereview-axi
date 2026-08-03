@@ -74,7 +74,9 @@ body {
 }
 
 #note { color: var(--mid); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#counts { color: var(--mid); white-space: nowrap; }
+#counts { color: var(--mid); white-space: nowrap; display: flex; align-items: center; gap: 4px; }
+
+#queue-open[aria-expanded="true"] { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
 
 #activity { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 #activity:empty { display: none; }
@@ -129,7 +131,41 @@ main { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); mi
 #files .gen { opacity: 0.65; }
 #files .count { color: var(--accent); }
 
+#diff-wrap { position: relative; min-width: 0; }
 #diff { overflow-x: auto; }
+
+/* A translucent scrim, not a full-page block: the human keeps their bearings
+   on the file list and header while the diff itself is being replaced. */
+#diff-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: var(--radius-xl);
+  background: color-mix(in srgb, var(--ink-900) 72%, transparent);
+  color: var(--ink);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur) var(--ease);
+  z-index: 1;
+}
+
+#diff-overlay.visible { opacity: 1; pointer-events: auto; }
+
+#diff-overlay .spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-pill);
+  border: 2px solid var(--hair);
+  border-top-color: var(--accent);
+  /* The blanket prefers-reduced-motion rule below collapses this to one
+     imperceptible frame, leaving a static ring rather than a spin. */
+  animation: cr-spin 0.8s linear infinite;
+}
+
+@keyframes cr-spin { to { transform: rotate(360deg); } }
 
 .filehead {
   display: flex;
@@ -174,14 +210,68 @@ main { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); mi
   padding: 10px 12px;
 }
 
-.thread.answered { border-color: var(--hair); background: var(--card); display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+/* In split view the unified 88px lands inside the old pane's text column, so
+   a thread must offset by its own side: old starts at 44px, new starts after
+   the old pane, whose width is (100% - 88px) / 2, plus the two 44px gutters,
+   which simplifies to 50% + 44px. */
+#diff.split .thread[data-side="old"] { margin-left: 44px; }
+#diff.split .thread[data-side="new"] { margin-left: calc(50% + 44px); }
+
+.thread.answered, .thread.resolved { border-color: var(--hair); background: var(--card); }
 .thread.stale { border-color: var(--del); }
 .thread .who { color: var(--mid); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
-.thread .was { color: var(--mid); white-space: pre-wrap; }
+.thread .body { white-space: pre-wrap; margin-top: 4px; }
+.thread .was { color: var(--mid); white-space: pre-wrap; margin-top: 8px; }
 .thread .warn { color: var(--del); font-size: 12px; margin-top: 6px; }
 .thread .warn:empty { display: none; }
 
-.thread.composer { box-shadow: var(--shadow-floating); }
+/* Siblings of the opening comment, not a nested thread of their own: same
+   card ground, a hairline rather than the thread's own brass/hair border, so
+   a long exchange still reads as one thread. Capped and scrollable rather
+   than truncated: `-webkit-line-clamp` would forever hide an early reply, a
+   scrollbar just costs a scroll to see it again. */
+.thread-replies {
+  margin-top: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.reply { border-top: 1px solid var(--hair); padding-top: 6px; }
+.reply .who { color: var(--mid); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+.reply .body { white-space: pre-wrap; margin-top: 2px; }
+.reply.agent .who { color: var(--accent); }
+
+/* Nested inside an answered .thread rather than floated over the diff like
+   the annotate composer, so it must not inherit the outer 88px offset or the
+   540px cap meant for a dialog sitting beside code of its own. */
+.thread .thread.composer.followup { margin: 10px 0 0; max-width: none; }
+
+/* Floats above the diff rather than blending into them: its own ink ground,
+   no border, a strong shadow. Stays anchored under the picked line rather
+   than becoming a centred overlay, so the lines it comments on stay visible. */
+.thread.composer {
+  /* Brass edge as well as the shadow: dialog-on-dark needs the outline to be
+     findable, since a shadow alone barely reads against the diff's own ink. */
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-xl);
+  background: var(--ink-800);
+  box-shadow: var(--shadow-floating);
+  padding: 14px;
+  /* A comment is a sentence or two, so a full-pane band is mostly empty. Cap it
+     so it reads as a dialog over the code rather than a stripe across it. */
+  max-width: 540px;
+}
+
+.thread.composer .who {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: normal;
+  margin-bottom: 10px;
+}
 
 .thread textarea {
   width: 100%;
@@ -195,10 +285,136 @@ main { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); mi
   resize: vertical;
 }
 
-.verdicts { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
-.verdicts button { border-radius: var(--radius-pill); }
+/* Sunk below the panel's own ink-800 ground: --paper is the darkest ink
+   step, so the border can drop out entirely without the field vanishing. */
+.thread.composer textarea {
+  background: var(--paper);
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  padding: 10px 12px;
+}
+
+/* `:focus` rather than `:focus-visible`: a text field should always show where
+   the caret is, and the default ring here is blue, the only non-palette colour
+   on the page. Buttons keep `:focus-visible`, which is right for them. */
+.thread.composer textarea:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+
+/* A sibling of .thread.composer: same dark ink ground, brass border and
+   floating shadow, anchored under the fixed header rather than centred over
+   the diff, since checking a list reads better as a popover than a dialog. */
+#queue-panel {
+  position: fixed;
+  top: calc(var(--bar-h) + 8px);
+  right: 16px;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - var(--bar-h) - 24px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-xl);
+  background: var(--ink-800);
+  box-shadow: var(--shadow-floating);
+  z-index: 3;
+  transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+
+#queue-panel[hidden] {
+  /* Kept out of layout via [hidden] itself; the transform and opacity only
+     matter if a future change swaps [hidden] for a class-based toggle. */
+  display: none;
+}
+
+.queue-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--hair);
+  color: var(--ink);
+  font-weight: 600;
+}
+.queue-head button {
+  border: 0;
+  padding: 2px 8px;
+  color: var(--mid);
+}
+.queue-head button:hover { color: var(--ink); }
+
+#queue-list { overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+
+.queue-empty { color: var(--mid); padding: 12px; margin: 0; }
+
+.queue-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-md);
+  background: var(--paper);
+}
+
+.queue-entry-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 0;
+  text-align: left;
+  padding: 8px 10px;
+  background: transparent;
+}
+.queue-entry-open:hover { background: var(--card); }
+
+/* No uppercase here: this is a file path, not a label, and paths are
+   case-sensitive. Upper-casing it showed `x.js` as `X.JS`. */
+.queue-entry-loc { color: var(--mid); font-size: 11px; letter-spacing: 0.06em; }
+.queue-entry-verdict { color: var(--accent); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+
+/* Clamped, not truncated with an ellipsis alone: a couple of lines of real
+   text tells the human more than one truncated line would. */
+.queue-entry-body {
+  color: var(--ink);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+.queue-entry-remove {
+  border: 0;
+  margin: 6px 8px 0 0;
+  padding: 2px 8px;
+  color: var(--mid);
+  font-size: 11px;
+}
+.queue-entry-remove:hover { color: var(--del); }
+
+.queue-foot { display: flex; justify-content: flex-end; padding: 10px 12px; border-top: 1px solid var(--hair); }
+.queue-foot .primary,
+.queue-foot button:not(:disabled) { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.queue-foot button:not(:disabled):hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+
+.verdicts {
+  display: inline-flex;
+  gap: 2px;
+  margin-top: 10px;
+  padding: 2px;
+  background: var(--paper);
+  border-radius: var(--radius-pill);
+}
+.verdicts button { border: 0; border-radius: var(--radius-pill); padding: 4px 10px; }
 .verdicts button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-.thread .actions { display: flex; gap: 6px; margin-top: 8px; }
+.thread .actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.thread.composer .actions { justify-content: flex-end; }
+.thread.composer .actions .primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.thread.composer .actions .primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
 #stream[data-state="down"] { color: var(--del); }
 
 .tok-comment { color: var(--mid); font-style: italic; }

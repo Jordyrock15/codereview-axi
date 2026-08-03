@@ -9,6 +9,11 @@
 import { renderLine } from './highlight.js';
 import { pairLines } from './pair.js';
 import { activityState } from './activity.js';
+import {
+  overlayVisible, remainingVisibleMs, OVERLAY_SHOW_DELAY_MS, OVERLAY_MIN_VISIBLE_MS,
+  OVERLAY_REFRESHED_SHOW_DELAY_MS, OVERLAY_REFRESHED_MIN_VISIBLE_MS,
+} from './overlay.js';
+import { queueEntries } from './queue.js';
 
 const key = document.body.dataset.key;
 const token = new URLSearchParams(location.search).get('t') ?? '';
@@ -117,14 +122,121 @@ const paintPick = () => {
 /** @returns {void} */
 const counts = () => {
   const comments = view.session?.comments ?? [];
-  const unsent = comments.filter((c) => ['open', 'reopened'].includes(c.status)).length;
+  const unsent = comments.filter((c) => c.status === 'open').length;
   const answered = comments.filter((c) => c.status === 'answered').length;
   const stale = comments.filter((c) => c.status === 'stale').length;
 
-  $('counts').textContent = `${unsent} unsent · ${answered} answered · ${stale} stale`;
+  $('counts-unsent').textContent = `${unsent} unsent`;
+  $('counts-rest').textContent = `· ${answered} answered · ${stale} stale`;
+  $('queue-open').textContent = `Queued ${unsent}`;
   const send = /** @type {HTMLButtonElement} */ ($('send'));
   send.disabled = unsent === 0;
   send.textContent = unsent === 0 ? 'Send' : `Send ${unsent}`;
+  const queueSend = /** @type {HTMLButtonElement} */ ($('queue-send'));
+  queueSend.disabled = unsent === 0;
+  queueSend.textContent = unsent === 0 ? 'Send' : `Send ${unsent}`;
+};
+
+/** Whether the queue panel is currently open. Survives a re-render like `view.current` does. */
+let queueOpen = false;
+
+/** @returns {boolean} */
+const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/**
+ * @param {Event} event
+ * @returns {void}
+ */
+const onQueueOutsideClick = (event) => {
+  const panel = $('queue-panel');
+  const toggle = $('queue-open');
+  const target = /** @type {Node|null} */ (event.target);
+  if (target && (panel.contains(target) || toggle.contains(target))) return;
+  closeQueuePanel();
+};
+
+/**
+ * @param {import('./queue.js').QueueEntry} entry
+ * @returns {HTMLElement}
+ */
+const queueEntryEl = (entry) => {
+  const row = el('div', 'queue-entry');
+
+  const open = /** @type {HTMLButtonElement} */ (el('button', 'queue-entry-open'));
+  open.type = 'button';
+  open.append(
+    el('span', 'queue-entry-loc', entry.location),
+    el('span', 'queue-entry-verdict', entry.verdict),
+    el('span', 'queue-entry-body', entry.body),
+  );
+  open.addEventListener('click', () => { scrollToComment(entry.id); closeQueuePanel(); });
+
+  const remove = /** @type {HTMLButtonElement} */ (el('button', 'queue-entry-remove', 'Remove'));
+  remove.type = 'button';
+  remove.setAttribute('aria-label', `Remove the comment on ${entry.location || 'this note'} from the queue`);
+  remove.addEventListener('click', async (event) => {
+    event.stopPropagation();
+    remove.disabled = true;
+    await api(`/comments/${entry.id}`, { method: 'DELETE' });
+    await load();
+  });
+
+  row.append(open, remove);
+  return row;
+};
+
+/** @returns {void} */
+const renderQueuePanel = () => {
+  const panel = $('queue-panel');
+  const list = $('queue-list');
+  list.replaceChildren();
+
+  const entries = view.session ? queueEntries(view.session) : [];
+  if (entries.length === 0) {
+    list.append(el('p', 'queue-empty', 'Nothing queued. Draft a comment on the diff and it will show up here before you send it.'));
+  } else {
+    for (const entry of entries) list.append(queueEntryEl(entry));
+  }
+
+  panel.hidden = !queueOpen;
+  $('queue-open').setAttribute('aria-expanded', String(queueOpen));
+};
+
+/** @returns {void} */
+const openQueuePanel = () => {
+  queueOpen = true;
+  renderQueuePanel();
+  document.addEventListener('mousedown', onQueueOutsideClick);
+};
+
+/** @returns {void} */
+const closeQueuePanel = () => {
+  queueOpen = false;
+  renderQueuePanel();
+  document.removeEventListener('mousedown', onQueueOutsideClick);
+};
+
+/** @returns {void} */
+const toggleQueuePanel = () => { if (queueOpen) closeQueuePanel(); else openQueuePanel(); };
+
+/**
+ * Switches to the comment's file if needed (the same path the files-nav
+ * click handler takes) and scrolls its thread into view.
+ * @param {number} id
+ * @returns {void}
+ */
+const scrollToComment = (id) => {
+  const comment = view.session?.comments.find((c) => c.id === id);
+  if (!comment) return;
+
+  if (comment.file !== null && comment.file !== view.current) {
+    view.current = comment.file;
+    renderFiles();
+    renderDiff();
+  }
+
+  const target = document.querySelector(`[data-comment-id="${id}"]`);
+  target?.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'center' });
 };
 
 /**
@@ -224,9 +336,10 @@ const openComposer = (file, afterRow) => {
   document.querySelector('.thread.composer')?.remove();
 
   const box = el('div', 'thread composer');
+  box.dataset.side = picking.side;
   const from = Math.min(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
   const to = Math.max(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
-  box.append(el('div', 'who', `New comment · ${file.path} · ${from === to ? `line ${from}` : `lines ${from}-${to}`}`));
+  box.append(el('div', 'who', `Annotate ${file.path}:${from === to ? from : `${from}-${to}`}`));
 
   const text = document.createElement('textarea');
   text.placeholder = 'What is wrong, and what should change';
@@ -256,7 +369,7 @@ const openComposer = (file, afterRow) => {
   box.append(warn);
 
   const actions = el('div', 'actions');
-  const save = /** @type {HTMLButtonElement} */ (el('button', '', 'Save'));
+  const save = /** @type {HTMLButtonElement} */ (el('button', 'primary', 'Queue'));
   const cancel = el('button', '', 'Cancel');
 
   save.addEventListener('click', async () => {
@@ -297,7 +410,7 @@ const openComposer = (file, afterRow) => {
     if (!res.ok) {
       save.disabled = false;
       const problem = await res.json().catch(() => null);
-      warn.textContent = problem?.error ?? `Save failed (${res.status}).`;
+      warn.textContent = problem?.error ?? `Queue failed (${res.status}).`;
       return;
     }
     box.remove();
@@ -306,7 +419,7 @@ const openComposer = (file, afterRow) => {
   });
 
   cancel.addEventListener('click', () => { box.remove(); clearPick(); });
-  actions.append(save, cancel);
+  actions.append(cancel, save);
   box.append(actions);
 
   afterRow.after(box);
@@ -325,7 +438,7 @@ const updateComposerHeader = (box, file) => {
   const from = Math.min(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
   const to = Math.max(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
   const who = box.querySelector('.who');
-  if (who) who.textContent = `New comment · ${file.path} · ${from === to ? `line ${from}` : `lines ${from}-${to}`}`;
+  if (who) who.textContent = `Annotate ${file.path}:${from === to ? from : `${from}-${to}`}`;
 
   // A restart note from an earlier rejected shift-click must not linger past
   // the next successful pick, and this is the only path a successful
@@ -335,37 +448,101 @@ const updateComposerHeader = (box, file) => {
 };
 
 /**
+ * One message below the opening comment, human and agent visually distinct.
+ * @param {import('../../types.js').Message} message
+ * @returns {HTMLElement}
+ */
+const replyEl = (message) => {
+  const row = el('div', `reply ${message.role}`);
+  const label = message.role === 'agent' ? `agent · ${message.status ?? ''}` : 'human';
+  row.append(el('div', 'who', label), el('div', 'body', message.body));
+  return row;
+};
+
+/**
+ * The trailing messages a long thread would otherwise blow the diff layout
+ * open for: capped and scrollable rather than truncated, so nothing said is
+ * ever lost, it just takes a scroll to reach.
+ * @param {import('../../types.js').Message[]} replies
+ * @returns {HTMLElement}
+ */
+const repliesEl = (replies) => {
+  const wrap = el('div', 'thread-replies');
+  for (const message of replies) wrap.append(replyEl(message));
+  return wrap;
+};
+
+/**
+ * Replaces the Reopen button on an answered thread: a fresh textarea posting
+ * new text, rather than resending the same body.
+ * @param {number} id
+ * @returns {HTMLElement}
+ */
+const followupComposer = (id) => {
+  const box = el('div', 'thread composer followup');
+  const text = document.createElement('textarea');
+  text.placeholder = 'Say more, ask something else, or point out what is still wrong';
+  box.append(text);
+
+  const warn = el('div', 'warn');
+  const actions = el('div', 'actions');
+  const save = /** @type {HTMLButtonElement} */ (el('button', 'primary', 'Queue'));
+  const cancel = el('button', '', 'Cancel');
+
+  save.addEventListener('click', async () => {
+    if (text.value.trim() === '') { text.focus(); return; }
+    save.disabled = true;
+    const res = await api(`/comments/${id}/followup`, { method: 'POST', body: JSON.stringify({ body: text.value }) });
+    if (!res.ok) {
+      save.disabled = false;
+      const problem = await res.json().catch(() => null);
+      warn.textContent = problem?.error ?? `Queue failed (${res.status}).`;
+      return;
+    }
+    await load();
+  });
+  cancel.addEventListener('click', () => { box.remove(); });
+
+  actions.append(cancel, save);
+  box.append(warn, actions);
+  return box;
+};
+
+/**
  * @param {Comment} comment
  * @returns {HTMLElement}
  */
 const threadFor = (comment) => {
   const box = el('div', `thread ${comment.status}`);
-
-  if (comment.status === 'answered' || comment.status === 'resolved') {
-    box.append(el('span', '', `${comment.status === 'resolved' ? 'Resolved' : 'Answered'} · ${comment.agentReply?.status ?? ''}: ${comment.agentReply?.body ?? ''}`));
-    const actions = el('span', 'actions');
-    const reopen = el('button', '', 'Reopen');
-    reopen.addEventListener('click', () => patch(comment.id, { status: 'reopened' }));
-    actions.append(reopen);
-
-    if (comment.status === 'answered') {
-      const resolve = el('button', '', 'Resolve');
-      resolve.addEventListener('click', () => patch(comment.id, { status: 'resolved' }));
-      actions.append(resolve);
-    }
-    box.append(actions);
-    return box;
-  }
+  box.dataset.commentId = String(comment.id);
+  // Session-scope notes have no side (they are not anchored to a line), so
+  // they keep the base offset rather than being pinned to an arbitrary pane.
+  if (comment.side !== null) box.dataset.side = comment.side;
 
   box.append(el('div', 'who', `${comment.status} · ${comment.verdict}`));
   box.append(el('div', 'body', comment.body));
 
+  if (comment.replies.length > 0) box.append(repliesEl(comment.replies));
+
   if (comment.status === 'stale') {
     box.append(el('div', 'was', `was: ${comment.quote}`));
+    return box;
+  }
+
+  if (comment.status === 'answered' || comment.status === 'resolved') {
     const actions = el('span', 'actions');
-    const reopen = el('button', '', 'Reopen');
-    reopen.addEventListener('click', () => patch(comment.id, { status: 'reopened' }));
-    actions.append(reopen);
+    if (comment.status === 'answered') {
+      const reply = el('button', '', 'Reply');
+      reply.addEventListener('click', () => {
+        box.querySelector('.thread.composer.followup')?.remove();
+        const composer = followupComposer(comment.id);
+        box.append(composer);
+        composer.querySelector('textarea')?.focus();
+      });
+      const resolve = el('button', '', 'Resolve');
+      resolve.addEventListener('click', () => patch(comment.id, { status: 'resolved' }));
+      actions.append(reply, resolve);
+    }
     box.append(actions);
   }
 
@@ -536,6 +713,7 @@ const renderDiff = () => {
   const session = /** @type {Session} */ (view.session);
   const pane = $('diff');
   pane.replaceChildren();
+  pane.classList.toggle('split', session.view === 'split');
 
   const file = session.snapshot.files.find((f) => f.path === view.current);
   if (!file) return;
@@ -647,6 +825,61 @@ const done = async () => {
   $('note').textContent = 'Session closed. You can close this tab.';
 };
 
+/** Set once the overlay is actually on screen, so its hide can be timed against it. @type {number|null} */
+let overlayShownAt = null;
+/** @type {ReturnType<typeof setTimeout>|null} */
+let overlayHideTimer = null;
+
+/**
+ * Runs `work` behind the diff overlay, but only reveals it if `work` outlasts
+ * `showDelayMs`, so an instant local update never flashes it, and keeps it up
+ * for `minVisibleMs` once shown so a fast one never flickers it away. With
+ * `showDelayMs: 0` the overlay is change feedback rather than a slow-work
+ * spinner: `overlayVisible` is already true at elapsed 0, so it reveals on
+ * the same tick instead of waiting on a timer, which would otherwise race a
+ * fast `work` finishing before the timer callback ran. The `finally`
+ * guarantees the overlay clears even if `work` rejects, so a failed fetch
+ * can never leave the pane blocked.
+ * @param {() => Promise<void>} work
+ * @param {{showDelayMs?: number, minVisibleMs?: number, label?: string}} [options]
+ * @returns {Promise<void>}
+ */
+const withOverlay = async (work, options = {}) => {
+  const { showDelayMs = OVERLAY_SHOW_DELAY_MS, minVisibleMs = OVERLAY_MIN_VISIBLE_MS, label = 'Updating' } = options;
+  const overlay = $('diff-overlay');
+  $('diff-overlay-label').textContent = label;
+  if (overlayHideTimer !== null) clearTimeout(overlayHideTimer);
+
+  let finished = false;
+  const reveal = () => {
+    overlay.classList.add('visible');
+    overlayShownAt = Date.now();
+  };
+
+  let showTimer = null;
+  if (overlayVisible({ elapsedMs: 0, finished, showDelayMs })) {
+    reveal();
+  } else {
+    showTimer = setTimeout(() => {
+      if (overlayVisible({ elapsedMs: showDelayMs, finished })) reveal();
+    }, showDelayMs);
+  }
+
+  try {
+    await work();
+  } finally {
+    finished = true;
+    if (showTimer !== null) clearTimeout(showTimer);
+    if (overlayShownAt !== null) {
+      const shownAt = overlayShownAt;
+      overlayHideTimer = setTimeout(() => {
+        overlay.classList.remove('visible');
+        overlayShownAt = null;
+      }, remainingVisibleMs(Date.now() - shownAt, minVisibleMs));
+    }
+  }
+};
+
 /** @returns {void} */
 const subscribe = () => {
   const badge = $('stream');
@@ -654,7 +887,18 @@ const subscribe = () => {
 
   source.addEventListener('open', () => { badge.textContent = 'connected'; badge.dataset.state = 'up'; });
   source.addEventListener('error', () => { badge.textContent = 'disconnected'; badge.dataset.state = 'down'; });
-  for (const name of ['comment', 'sent', 'refreshed', 'closed', 'note', 'view']) {
+  // `refreshed` is the moment the agent's fix lands and the whole snapshot is
+  // replaced: that is change feedback, not slow-work covering, so it must
+  // always be seen rather than only when the reload happens to be slow. The
+  // rest (a new comment, a status change, a note or view toggle) redraw the
+  // same diff and would just train the human to ignore a loader that flashes
+  // for nothing.
+  source.addEventListener('refreshed', () => { void withOverlay(load, {
+    showDelayMs: OVERLAY_REFRESHED_SHOW_DELAY_MS,
+    minVisibleMs: OVERLAY_REFRESHED_MIN_VISIBLE_MS,
+    label: 'Refreshing',
+  }); });
+  for (const name of ['comment', 'sent', 'closed', 'note', 'view']) {
     source.addEventListener(name, () => { void load(); });
   }
 };
@@ -688,6 +932,7 @@ const load = async () => {
   renderDiff();
   counts();
   renderActivity();
+  renderQueuePanel();
 };
 
 /** @returns {Promise<void>} */
@@ -700,7 +945,16 @@ const toggleView = async () => {
 $('send').addEventListener('click', send);
 $('done').addEventListener('click', done);
 $('view').addEventListener('click', toggleView);
-document.addEventListener('keydown', (event) => { if (event.key === 'Escape') clearPick(); });
+$('queue-open').addEventListener('click', toggleQueuePanel);
+$('queue-close').addEventListener('click', closeQueuePanel);
+$('queue-send').addEventListener('click', async () => { await send(); closeQueuePanel(); });
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  // The panel takes priority: closing it must not also discard an unrelated
+  // in-progress composer, which clearPick() would do.
+  if (queueOpen) { closeQueuePanel(); return; }
+  clearPick();
+});
 
 subscribe();
-await load();
+await withOverlay(load);

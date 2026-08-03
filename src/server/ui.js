@@ -35,16 +35,33 @@ export const shellHtml = (key) => `<!doctype html>
 <body data-key="${escapeHtml(key)}" data-large="${LARGE_FILE_LINES}">
 <header id="bar">
   <span id="note"></span>
-  <span id="counts"></span>
+  <span id="counts">
+    <span id="counts-unsent">0 unsent</span>
+    <span id="counts-rest">· 0 answered · 0 stale</span>
+  </span>
   <span id="activity" data-delivery="idle"></span>
   <button id="view" title="Toggle side-by-side">split</button>
+  <button id="queue-open" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="queue-panel">Queued 0</button>
   <button id="send" disabled>Send</button>
   <button id="done">Done</button>
   <span id="stream" title="event stream">connecting</span>
 </header>
+<div id="queue-panel" role="region" aria-label="Queued comments" hidden>
+  <div class="queue-head">
+    <span>Queue</span>
+    <button id="queue-close" type="button" aria-label="Close queue">✕</button>
+  </div>
+  <div id="queue-list"></div>
+  <div class="queue-foot">
+    <button id="queue-send" type="button" disabled>Send</button>
+  </div>
+</div>
 <main>
   <nav id="files" aria-label="Changed files"></nav>
-  <section id="diff" aria-label="Diff"></section>
+  <div id="diff-wrap">
+    <section id="diff" aria-label="Diff"></section>
+    <div id="diff-overlay" aria-hidden="true"><span class="spinner"></span><span id="diff-overlay-label">Updating</span></div>
+  </div>
 </main>
 <script type="module" src="/assets/app.js"></script>
 </body>

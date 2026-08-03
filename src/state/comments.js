@@ -2,12 +2,13 @@ import { StateError } from './errors.js';
 
 /**
  * @typedef {import('../types.js').Comment} Comment
+ * @typedef {import('../types.js').Message} Message
  * @typedef {import('../types.js').Session} Session
  */
 
 const VERDICTS = ['fix', 'explain', 'ignore'];
 const REPLY_STATUSES = ['fixed', 'explained', 'skipped'];
-const SENDABLE = ['open', 'reopened'];
+const SENDABLE = ['open'];
 
 /**
  * @param {Session} session
@@ -49,7 +50,7 @@ export const addComment = (session, input, now) => {
     body,
     verdict,
     status: 'open',
-    agentReply: null,
+    replies: [],
     deliveredAt: null,
     createdAt: at,
     updatedAt: at,
@@ -87,14 +88,9 @@ export const patchComment = (session, id, patch, now) => {
   }
 
   if (patch.status !== undefined) {
-    if (!['resolved', 'reopened'].includes(patch.status)) {
-      throw new StateError(400, 'status may only be set to resolved or reopened');
-    }
-    // Stale may only move to reopened: resolving code that no longer exists is meaningless.
-    const allowedFrom = patch.status === 'reopened'
-      ? ['answered', 'resolved', 'reopened', 'stale']
-      : ['answered', 'resolved', 'reopened'];
+    if (patch.status !== 'resolved') throw new StateError(400, 'status may only be set to resolved');
 
+    const allowedFrom = ['answered', 'resolved'];
     if (!allowedFrom.includes(comment.status)) {
       if (comment.status === 'stale') {
         throw new StateError(409, `comment ${id} is stale, its code no longer exists`);
@@ -116,6 +112,31 @@ export const patchComment = (session, id, patch, now) => {
 export const openComments = (session) => session.comments.filter((c) => SENDABLE.includes(c.status));
 
 /**
+ * True if `comment` carries a human message `cr wait` has not yet drained:
+ * the opening one, or any follow-up. Delivery is per-message now, so a
+ * comment already delivered once can still owe a later follow-up.
+ * @param {Comment} comment
+ * @returns {boolean}
+ */
+export const hasUndeliveredHuman = (comment) => comment.status === 'sent' && (
+  comment.deliveredAt === null || comment.replies.some((m) => m.role === 'human' && m.deliveredAt === null)
+);
+
+/**
+ * Stamps every currently-undelivered human message on `comment` as delivered,
+ * in one poll's round, so at-most-once holds per message rather than per comment.
+ * @param {Comment} comment
+ * @param {string} at
+ * @returns {void}
+ */
+export const markDelivered = (comment, at) => {
+  if (comment.deliveredAt === null) comment.deliveredAt = at;
+  for (const message of comment.replies) {
+    if (message.role === 'human' && message.deliveredAt === null) message.deliveredAt = at;
+  }
+};
+
+/**
  * @param {Session} session
  * @returns {number}
  */
@@ -134,9 +155,6 @@ export const markSent = (session, now) => {
   const at = new Date(now).toISOString();
   for (const comment of sending) {
     comment.status = 'sent';
-    // Clear the stamp: at-most-once is per round, so a reopened comment must be
-    // deliverable again or the human's disagreement never reaches the agent.
-    comment.deliveredAt = null;
     comment.updatedAt = at;
   }
   session.updatedAt = at;
@@ -160,13 +178,80 @@ export const applyReply = (session, id, reply, now) => {
   }
 
   const at = new Date(now).toISOString();
-  comment.agentReply = {
-    status: /** @type {'fixed'|'explained'|'skipped'} */ (reply.status),
+  /** @type {Message} */
+  const message = {
+    role: 'agent',
     body: String(reply.body ?? ''),
+    status: /** @type {'fixed'|'explained'|'skipped'} */ (reply.status),
     at,
+    deliveredAt: null,
   };
+  comment.replies.push(message);
   comment.status = 'answered';
   comment.updatedAt = at;
   session.updatedAt = at;
   return comment;
+};
+
+/**
+ * A human follow-up on an answered thread: new text, appended rather than
+ * overwriting the opening comment, and re-queued so the human can review it
+ * before it reaches the agent. This is what replaces Reopen — Reopen resent
+ * the same body, which sent the agent back over ground already covered.
+ * @param {Session} session
+ * @param {number} id
+ * @param {string} body
+ * @param {number} now
+ * @returns {Comment}
+ */
+export const addFollowup = (session, id, body, now) => {
+  const comment = find(session, id);
+  if (comment.status !== 'answered') {
+    throw new StateError(409, `comment ${id} is ${comment.status}, a follow-up only makes sense on an answered thread`);
+  }
+
+  const trimmed = String(body ?? '').trim();
+  if (trimmed === '') throw new StateError(400, 'body cannot be empty');
+
+  const at = new Date(now).toISOString();
+  /** @type {Message} */
+  const message = {
+    role: 'human', body: trimmed, status: null, at, deliveredAt: null,
+  };
+  comment.replies.push(message);
+  comment.status = 'open';
+  comment.updatedAt = at;
+  session.updatedAt = at;
+  return comment;
+};
+
+/**
+ * What Remove does in the queue panel. A comment that has never been sent has
+ * nothing to lose, so it is deleted outright. A comment queued again by a
+ * follow-up already carries an answered exchange: deleting it would throw
+ * that away for the sake of cancelling one draft, so this only pops the
+ * undelivered draft and puts the thread back to answered.
+ * @param {Session} session
+ * @param {number} id
+ * @param {number} now
+ * @returns {{removed: true}|{removed: false, comment: Comment}}
+ */
+export const removeQueued = (session, id, now) => {
+  const index = session.comments.findIndex((c) => c.id === id);
+  if (index === -1) throw new StateError(404, `no comment with id ${id}`);
+  const comment = session.comments[index];
+  if (comment.status !== 'open') throw new StateError(409, `comment ${id} is ${comment.status}, not queued`);
+
+  const at = new Date(now).toISOString();
+  if (comment.replies.length === 0) {
+    session.comments.splice(index, 1);
+    session.updatedAt = at;
+    return { removed: true };
+  }
+
+  comment.replies.pop();
+  comment.status = 'answered';
+  comment.updatedAt = at;
+  session.updatedAt = at;
+  return { removed: false, comment };
 };

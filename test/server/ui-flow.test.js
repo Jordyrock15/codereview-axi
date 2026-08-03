@@ -45,7 +45,7 @@ test('the sequence Send performs reports the count the button showed', async (t)
   assert.equal((await call('POST', at('/send'))).json.sent, 2);
 });
 
-test('the sequence Reopen performs puts an answered comment back in the unsent count', async (t) => {
+test('the sequence a follow-up performs puts an answered comment back in the unsent count', async (t) => {
   const { call, at } = await setup(t);
   await call('POST', at('/comments'), {
     scope: 'line', file: 'a.js', side: 'new', startLine: 2, endLine: 2, quote: 'TWO', body: 'x', verdict: 'fix',
@@ -53,7 +53,7 @@ test('the sequence Reopen performs puts an answered comment back in the unsent c
   await call('POST', at('/send'));
   await call('POST', at('/replies'), { id: 1, status: 'fixed', body: 'done' });
 
-  await call('PATCH', at('/comments/1'), { status: 'reopened' });
+  await call('POST', at('/comments/1/followup'), { body: 'also check the other branch' });
 
   assert.equal((await call('POST', at('/send'))).json.sent, 1);
 });

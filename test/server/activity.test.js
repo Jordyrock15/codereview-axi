@@ -12,7 +12,7 @@ import { activityState } from '../../src/server/public/activity.js';
  */
 const comment = (overrides = {}) => ({
   id: 1, scope: 'line', file: 'a.js', side: 'new', startLine: 1, endLine: 1,
-  quote: '', body: '', verdict: 'fix', status: 'sent', agentReply: null,
+  quote: '', body: '', verdict: 'fix', status: 'sent', replies: [],
   deliveredAt: null, createdAt: '', updatedAt: '', ...overrides,
 });
 

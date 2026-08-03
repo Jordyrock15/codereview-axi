@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DEFAULT_COMMENT_FIELDS, AGENT_COMMENT_FIELDS, presentComment, selectFields, TRUNCATE_AT, truncate, nextSteps,
+  DEFAULT_COMMENT_FIELDS, AGENT_COMMENT_FIELDS, presentComment, selectFields, TRUNCATE_AT, truncate, nextSteps, nextStep,
 } from '../../src/cli/present.js';
 import { encode } from '../../src/cli/toon.js';
 
@@ -16,7 +16,7 @@ const comment = {
   body: 'Does this handle a negative total?',
   verdict: 'fix',
   status: 'open',
-  agentReply: null,
+  replies: [],
   deliveredAt: null,
   createdAt: '2026-07-31T09:18:19.791Z',
   updatedAt: '2026-07-31T09:18:19.791Z',
@@ -47,6 +47,46 @@ test('quote is present by default, being the comment\'s anchor', () => {
   assert.equal(DEFAULT_COMMENT_FIELDS.includes('quote'), true);
   assert.equal(AGENT_COMMENT_FIELDS.includes('quote'), true);
   assert.match(String(presentComment(comment, ['quote']).quote), /const remainder/);
+});
+
+test('replies replaced agentReply in the field set an agent may ask for', () => {
+  assert.equal(AGENT_COMMENT_FIELDS.includes('agentReply'), false);
+  assert.equal(AGENT_COMMENT_FIELDS.includes('replies'), true);
+});
+
+test('body presents the opening comment when there is no follow-up', () => {
+  assert.equal(presentComment(comment, ['body']).body, 'Does this handle a negative total?');
+});
+
+test('body presents the latest human message once a follow-up has been added, not the opening one', () => {
+  const withFollowup = {
+    ...comment,
+    replies: [
+      { role: 'agent', body: 'yes, clamped to zero', status: 'explained', at: '', deliveredAt: null },
+      { role: 'human', body: 'and what about NaN?', status: null, at: '', deliveredAt: null },
+    ],
+  };
+  assert.equal(presentComment(withFollowup, ['body']).body, 'and what about NaN?');
+});
+
+test('replies flattens the whole thread to one string, opening message first, for a tabular row', () => {
+  const withThread = {
+    ...comment,
+    replies: [
+      { role: 'agent', body: 'clamped to zero', status: 'fixed', at: '', deliveredAt: null },
+      { role: 'human', body: 'and NaN?', status: null, at: '', deliveredAt: null },
+    ],
+  };
+  const out = presentComment(withThread, ['replies']);
+  assert.equal(typeof out.replies, 'string');
+  assert.match(String(out.replies), /^human: Does this handle a negative total\?/);
+  assert.match(String(out.replies), /agent\(fixed\): clamped to zero/);
+  assert.match(String(out.replies), /human: and NaN\?$/);
+});
+
+test('replies is empty-thread-safe: just the opening message when nothing followed', () => {
+  const out = presentComment(comment, ['replies']);
+  assert.equal(out.replies, 'human: Does this handle a negative total?');
 });
 
 test('deliveredAt is unavailable at any --fields value, being internal bookkeeping', () => {
@@ -143,4 +183,104 @@ test('a --fields selection that drops id never produces an "undefined" reply tem
   const steps = nextSteps('wait', { comments: [{ body: 'x', quote: 'y' }] });
   assert.equal(steps.some((s) => s.includes('undefined')), false);
   for (const s of steps) assert.match(s, /^cr /);
+});
+
+test('nextStep: after open, do not reply yet and run cr wait', () => {
+  const step = nextStep('open', { key: 'abc' });
+  assert.match(String(step), /Do not reply to the human yet/);
+  assert.match(String(step), /`cr wait`/);
+});
+
+test('nextStep: wait with comments says to locate by quote, not line numbers, and not to stop', () => {
+  const step = nextStep('wait', { comments: [{ id: 1 }], closed: false });
+  assert.match(String(step), /quote, not its line numbers/);
+  assert.match(String(step), /`cr reply`/);
+  assert.match(String(step), /`cr refresh`/);
+  assert.match(String(step), /Do not stop to report to the human/);
+});
+
+test('nextStep: wait with no comments (a timeout) says to poll again, not that the review is over', () => {
+  const step = nextStep('wait', { empty: 'no comments (0 of 4)', closed: false });
+  assert.match(String(step), /`cr wait` again/);
+  assert.match(String(step), /Do not report to the human/);
+  assert.equal(/review being over/.test(String(step)), true);
+});
+
+test('nextStep: any payload with closed: true says stop polling and summarise, regardless of verb', () => {
+  const step = nextStep('wait', { comments: [], closed: true, closedBy: 'human' });
+  assert.match(String(step), /pressed Done/);
+  assert.match(String(step), /Stop polling/);
+  assert.match(String(step), /do not reopen/);
+});
+
+test('nextStep: reply with a fix comment still outstanding says to reply to the rest, refresh not mentioned yet', () => {
+  const step = nextStep('reply', { id: 1, status: 'explained', fix: { outstanding: 2, answered: 1 } });
+  assert.match(String(step), /remaining comments/);
+  assert.equal(/`cr refresh`/.test(String(step)), false, 'refresh is premature while fixes are still owed');
+});
+
+test('nextStep: reply to a fix with none outstanding says to refresh then wait', () => {
+  const step = nextStep('reply', { id: 1, status: 'fixed', fix: { outstanding: 0, justFixed: true } });
+  assert.match(String(step), /`cr refresh`/);
+  assert.match(String(step), /`cr wait`/);
+  assert.equal(/remaining comments/.test(String(step)), false);
+});
+
+test('nextStep: replying to an explain does not ask for a refresh, even after a fix earlier in the session', () => {
+  // The signal is what this reply touched, not what the session has ever done:
+  // a cumulative count made every later explain-only reply claim a refresh was
+  // owed, which is precisely the no-op this rule exists to avoid.
+  const step = nextStep('reply', { id: 2, status: 'explained', fix: { outstanding: 0, justFixed: false } });
+  assert.equal(/`cr refresh`/.test(String(step)), false);
+  assert.match(String(step), /`cr wait`/);
+});
+
+test('nextStep: reply on a pure-explain batch, no fix comments involved at all, skips refresh entirely', () => {
+  const step = nextStep('reply', { id: 1, status: 'explained', fix: { outstanding: 0, answered: 0 } });
+  assert.equal(step, 'Run `cr wait`.');
+});
+
+test('nextStep: refresh says to run cr wait', () => {
+  assert.equal(nextStep('refresh', { key: 'abc' }), 'Run `cr wait`.');
+});
+
+test('nextStep: close says the session is over, summarise for the human', () => {
+  const step = nextStep('close', { key: 'abc', status: 'closed' });
+  assert.match(String(step), /session is over/);
+  assert.match(String(step), /Summarise/);
+});
+
+test('nextStep: bare cr showing a live session says to run cr wait', () => {
+  const step = nextStep('help', { repo: '/x', note: '', base: '', pr: '' });
+  assert.match(String(step), /already open/);
+  assert.match(String(step), /`cr wait`/);
+});
+
+test('nextStep: list says open comments are drafts the human has not sent, cr wait delivers work', () => {
+  const withComments = nextStep('list', { comments: [{ id: 1 }] });
+  const empty = nextStep('list', { empty: 'no comments (0 of 0)' });
+  for (const step of [withComments, empty]) {
+    assert.match(String(step), /drafts the human has not sent/);
+    assert.match(String(step), /`cr wait`/);
+  }
+});
+
+test('nextStep: error slugs get retryable, terminal or human-facing advice as appropriate', () => {
+  assert.match(String(nextStep('error', { error: { code: 'nothing-to-review', message: 'x' } })), /do not retry/);
+  assert.match(String(nextStep('error', { error: { code: 'agent-waiting', message: 'x' } })), /retryable/);
+  assert.match(String(nextStep('error', { error: { code: 'agent-waiting', message: 'x' } })), /`cr wait` again/);
+  assert.match(String(nextStep('error', { error: { code: 'session-closed', message: 'x' } })), /Do not reopen/);
+  assert.match(String(nextStep('error', { error: { code: 'server-unreachable', message: 'x' } })), /Retry once/);
+  assert.match(String(nextStep('error', { error: { code: 'usage', message: 'x' } })), /`cr <verb> --help`/);
+  assert.match(String(nextStep('error', { error: { code: 'invalid-input', message: 'x' } })), /`cr <verb> --help`/);
+});
+
+test('nextStep: a slug with no specific advice is omitted rather than vague', () => {
+  for (const code of ['state', 'bad-response', 'not-found', 'conflict', 'diff-too-large', 'server-error', 'error']) {
+    assert.equal(nextStep('error', { error: { code, message: 'x' } }), undefined);
+  }
+});
+
+test('nextStep: setup has no next_step, being outside the review loop', () => {
+  assert.equal(nextStep('setup', { path: '/x', status: 'installed' }), undefined);
 });

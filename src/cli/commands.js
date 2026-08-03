@@ -15,7 +15,9 @@ import {
   USAGE, verbHelp, unknownFlags, checkArity, booleanFlagNames,
 } from './spec.js';
 import { encode } from './toon.js';
-import { presentComment, selectFields, nextSteps } from './present.js';
+import {
+  presentComment, selectFields, nextSteps, nextStep,
+} from './present.js';
 import { installHook } from './setup.js';
 
 export { USAGE } from './spec.js';
@@ -264,8 +266,15 @@ const HANDLERS = {
     const comment = unwrap(await request(port, 'POST', `/api/sessions/${key}/replies`, body, token));
     // The agent just wrote the body; echoing it back is pure cost. counts
     // tells it whether anything else still awaits a reply, matching close.
+    // fix tells nextStep whether refresh is worth mentioning: an explain-only
+    // batch changes no code, so refresh would be a pointless no-op.
     const session = unwrap(await request(port, 'GET', `/api/sessions/${key}`, undefined, token));
-    return { id: comment.id, status: comment.status, counts: commentCounts(session.comments) };
+    return {
+      id: comment.id,
+      status: comment.status,
+      counts: commentCounts(session.comments),
+      fix: fixCounts(session.comments, comment),
+    };
   },
 
   refresh: async ({ cwd, port }) => {
@@ -326,6 +335,25 @@ const commentCounts = (comments) => {
   for (const { status } of comments) counts[status] = (counts[status] ?? 0) + 1;
   return counts;
 };
+
+/**
+ * How many verdict-`fix` comments still await a reply, and whether the reply
+ * just made was to one. `nextStep` uses this, not `counts`, to decide whether
+ * refresh is worth running: `counts` is keyed by status across every verdict,
+ * so an all-`explain` batch would otherwise trigger a refresh that reports
+ * `relocated: []` for nothing.
+ * `replied` is the comment this reply answered.
+ * @param {{verdict: string, status: string}[]} comments
+ * @param {{verdict?: string}} [replied]
+ * @returns {{outstanding: number, justFixed: boolean}}
+ */
+const fixCounts = (comments, replied) => ({
+  outstanding: comments.filter((c) => c.verdict === 'fix' && c.status === 'sent').length,
+  // Whether *this* reply touched code, not whether any fix was ever answered in
+  // the session: a cumulative count made every later explain-only batch claim a
+  // refresh was owed, which is the no-op this rule exists to avoid.
+  justFixed: replied?.verdict === 'fix',
+});
 
 /**
  * Joins `files[].tags` into a space-separated string for `open`, `refresh`
@@ -389,8 +417,19 @@ export const run = async ({
   const asText = (/** @type {unknown} */ value) => (
     flags.json === true ? JSON.stringify(value, null, 2) : encode(/** @type {any} */ (value))
   );
+  /**
+   * @param {string} slug
+   * @param {string} message
+   * @returns {Record<string, unknown>}
+   */
+  const errorPayload = (slug, message) => {
+    /** @type {Record<string, unknown>} */
+    const payload = { error: { code: slug, message } };
+    const step = flags['no-help'] === true ? undefined : nextStep('error', payload);
+    return step === undefined ? payload : { ...payload, next_step: step };
+  };
   /** @param {CliError} err */
-  const fail = (err) => ({ code: err.code, out: asText({ error: { code: err.slug, message: err.message } }) });
+  const fail = (err) => ({ code: err.code, out: asText(errorPayload(err.slug, err.message)) });
 
   // `help` is not a real handler: it is what a bare `cr`, or the literal
   // word `help`, resolves to (see parseArgs). It still has a VERBS entry, so
@@ -426,8 +465,9 @@ export const run = async ({
   if (verb === 'help') {
     const live = await liveState(cwd);
     if (live === null) return { code: 0, out: USAGE };
-    const withHelp = flags['no-help'] === true ? live : { ...live, help: nextSteps(verb, live) };
-    return { code: 0, out: asText(withHelp) };
+    if (flags['no-help'] === true) return { code: 0, out: asText(live) };
+    const withHelp = { ...live, help: nextSteps(verb, live) };
+    return { code: 0, out: asText({ ...withHelp, next_step: nextStep(verb, live) }) };
   }
 
   // Unreachable in practice: the hasOwn check above already failed any verb
@@ -443,15 +483,15 @@ export const run = async ({
       flags, cwd, port, resolvePr, homedir,
     });
     const payload = /** @type {Record<string, unknown>} */ (forDisplay(result));
-    const withHelp = flags['no-help'] === true
-      ? payload
-      : { ...payload, help: nextSteps(verb, payload) };
-    return { code: 0, out: asText(withHelp) };
+    if (flags['no-help'] === true) return { code: 0, out: asText(payload) };
+    const withHelp = { ...payload, help: nextSteps(verb, payload) };
+    const step = nextStep(verb, payload);
+    return { code: 0, out: asText(step === undefined ? withHelp : { ...withHelp, next_step: step }) };
   } catch (err) {
     const code = err instanceof CliError ? err.code : 1;
     const slug = err instanceof CliError ? err.slug : 'error';
     const message = err instanceof Error ? err.message : String(err);
-    return { code, out: asText({ error: { code: slug, message } }) };
+    return { code, out: asText(errorPayload(slug, message)) };
   }
 };
 

@@ -102,7 +102,7 @@ const portFor = async (env) => {
   return JSON.parse(await readFile(path.join(/** @type {string} */ (env.CODEREVIEW_AXI_HOME), 'server.json'), 'utf8')).port;
 };
 
-test('a full session runs open, comment, send, wait, reply, refresh, reopen, close', async (t) => {
+test('a full session runs open, comment, send, wait, reply, refresh, follow-up, close', async (t) => {
   const { cr, repo, env } = await setup(t);
 
   const opened = JSON.parse((await cr(['open', '--note', 'refactored a', '--json'])).out);
@@ -138,14 +138,16 @@ test('a full session runs open, comment, send, wait, reply, refresh, reopen, clo
   const listed = JSON.parse((await cr(['list', '--json', '--fields', 'all'])).out);
   assert.equal(listed.comments[0].status, 'answered');
 
-  // The human reopens, the agent sees it again.
-  await fetch(`http://127.0.0.1:${port}/api/sessions/${opened.key}/comments/1`, {
-    method: 'PATCH',
+  // The human follows up with new text rather than reopening the same body.
+  await fetch(`http://127.0.0.1:${port}/api/sessions/${opened.key}/comments/1/followup`, {
+    method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-cr-token': token },
-    body: JSON.stringify({ status: 'reopened' }),
+    body: JSON.stringify({ body: 'also check the negative case' }),
   });
   assert.equal((await post(port, opened.key, token, '/send')).json.sent, 1);
-  assert.equal(JSON.parse((await cr(['wait', '--timeout', '5', '--json'])).out).comments.length, 1);
+  const followedUp = JSON.parse((await cr(['wait', '--timeout', '5', '--json'])).out);
+  assert.equal(followedUp.comments.length, 1);
+  assert.equal(followedUp.comments[0].body, 'also check the negative case', 'the agent gets the follow-up text, not the original body');
 
   // The human ends it.
   await post(port, opened.key, token, '/close', { closedBy: 'human' });
