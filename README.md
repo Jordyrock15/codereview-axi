@@ -2,38 +2,95 @@
 
 [![npm](https://img.shields.io/npm/v/codereview-axi)](https://www.npmjs.com/package/codereview-axi)
 
-Reviewing an agent-written diff in a terminal loses the anchor between a comment and the code it is about: line numbers scroll past, context is gone by the time a reply arrives. `cr` opens a browser review session over a git diff instead: the working diff by default, or a branch against its base, or a pull request. A human reads the actual diff, highlights lines, and leaves a comment with intent (fix, explain, ignore); those comments feed straight back to the coding agent as TOON (or JSON under `--json`), and the agent replies and refreshes the diff in place.
+### Review your agent's diff where the code is, not in the chat log.
 
 ![A cr review session: the payout splitter's diff, a human's question about negative takings, and the agent's answer threaded underneath it](https://raw.githubusercontent.com/Jordyrock15/codereview-axi/main/media/session.png)
 
-## Requirements
+Reviewing an agent-written diff in a terminal loses the anchor between a comment and the code it is about: line numbers scroll past, and the context is gone by the time a reply arrives.
 
-Node 20 or newer, and `git` on `PATH`. No runtime dependencies and no build step. `gh` is needed only for `--pr`.
+`cr` opens a browser review session over a git diff instead: the working diff by default, or a branch against its base, or a pull request. A human reads the actual diff, highlights lines, and leaves a comment with intent (fix, explain, ignore). Those comments feed straight back to the coding agent, which replies and refreshes the diff in place.
 
-## Install
+- **Anchored to code, not to line numbers.** A comment binds to the text you selected, so it follows the code as the agent edits around it.
+- **Local-first.** A loopback-only server, a random per-session token, and no cloud in the loop. `cr` never writes to the repository under review.
+- **Hands-off between rounds.** You annotate and press Send; the agent collects the batch, fixes, replies, and refreshes without being prompted.
 
-Run it without installing:
+`cr` is an [AXI](https://axi.md), which means:
+
+- It is just a CLI, and any capable agent can run it without setup.
+- It is built for agent ergonomics: TOON output, long polling, pre-computed counts, and contextual disclosure, so a round trip costs few tokens.
+- The skill and hook below only handle discovery. Agents learn the loop by using it, because every payload ends with the instruction for what to do next.
+
+## Quick start
+
+Install the skill in the [Agent Skills](https://agentskills.io) format with [`npx skills`](https://github.com/vercel-labs/skills):
+
+```sh
+npx skills add Jordyrock15/codereview-axi --skill code-review
+```
+
+That is the entire setup: no `npm install` needed. The skill teaches your agent to run `cr` through `npx -y codereview-axi`, so the CLI comes along on demand. For restricted sandboxes, CI, or harnesses where `npx -y` exits opaquely, it also documents the installed-copy fallbacks. Its frontmatter carries Hermes Agent metadata, so Hermes-compatible harnesses can surface it as a first-class productivity skill.
+
+By default the skill lands in the current project's skills directory (`.claude/skills/`, for example); add `-g` to install it for all projects (`~/.claude/skills/`).
+
+Then just ask, and the agent loads the skill when it recognises the task:
+
+> review these changes with me
+
+Or, in agents that expose skills as slash commands (Claude Code, for example), invoke it directly:
+
+```
+/code-review the payout splitter
+```
+
+The skill covers the trigger and the loop, including the rule that keeps `cr wait` in the foreground: a poll pushed into the background returns comments to a process nobody is listening to, and the human waits on an agent that has moved on.
+
+You need Node 20 or newer and `git` on `PATH`. `gh` is needed only for `--pr`. There are no runtime dependencies and no build step.
+
+## Other ways to run it
+
+The skill is the recommended path, but it is not the only one.
+
+### Zero setup
+
+Run it straight from npm, or install it globally:
 
 ```sh
 npx -y codereview-axi open
 ```
 
-Or install it globally:
-
 ```sh
 npm install -g codereview-axi
-cr open
+cr open --note "refactored the payout splitter"
 ```
 
-## Quick start
+Then say it once to your agent, and keep it short:
+
+> There is a review open, pick it up with `cr`.
+
+Deliberately, a bare `cr` with no session open carries no instruction to act. It falls back to usage, because an agent should not start a review nobody asked for: opening one is the human's call.
+
+### Session hook
+
+`cr setup` installs a `SessionStart` hook so a fresh conversation starts already knowing a review is waiting, instead of the agent having to think to ask. Run it once, then start reviews from your own terminal and never mention `cr` to the agent again:
 
 ```sh
+cr setup
 cr open --note "refactored the payout splitter"
-cr wait --timeout 300 --say "biggest change is the rounding, check that first"
-cr reply --id 1 --status fixed --body "rounded to the nearest penny before the split"
-cr refresh
-cr close
 ```
+
+Your next agent turn begins by seeing the live session and being told to collect it:
+
+```
+next_step: A review is already open. Run `cr wait` to pick up whatever is waiting.
+```
+
+From there it is hands-off. You annotate, press Send, and the fixes come back without you prompting between rounds.
+
+The hook runs this install's `cr` with no arguments via an absolute path rather than one resolved through `PATH`. It is an explicit, human-run command, never something the tool does on its own: writing to a Claude Code configuration file unasked is not a review tool's business. By default it targets `.claude/settings.local.json` at the repository root, the personal, git-ignored settings file; `--global` targets `~/.claude/settings.json` instead.
+
+It merges into whatever is already there, preserving unrelated hooks and settings. Running it again reports `already-present` and changes nothing. A settings file that fails to parse is left exactly as it is, and `cr setup` exits 1 rather than risk overwriting it.
+
+To check it worked, open a new Claude Code session after a `cr open` has been started elsewhere: the session should start already showing the live review state. This is not covered by any automated test here; it needs a real Claude Code session to observe.
 
 ## Using the review tab
 
@@ -49,59 +106,31 @@ The browser tab is where you do the reviewing; everything else is the agent's si
 
 A comment is anchored to the **text** you selected, not to a line number, so it follows the code as the agent edits around it. If the quoted text disappears entirely the comment is marked `stale` rather than silently pointing at the wrong line.
 
-## The skill
+## How it works
 
-The package ships a skill at `skills/code-review/SKILL.md`, in the [Agent Skills](https://agentskills.io) format. Install it with [`npx skills`](https://github.com/vercel-labs/skills):
+You do not have to teach your agent the loop. Every payload ends with a `next_step`: one imperative instruction, the last key so it prints last, addressed to the agent rather than describing state. `help[]` stays the command templates, ready to paste; `next_step` is the reason to run one of them right now rather than stopping to report to the human.
 
-```sh
-npx skills add Jordyrock15/codereview-axi --skill code-review
-```
+The loop it drives:
 
-By default it lands in the current project's `.claude/skills/`; add `-g` for `~/.claude/skills/` so it applies everywhere.
+1. `cr open --note "refactored the payout splitter"`. Prints the session URL, opens a tab.
+2. `cr wait --timeout 300 --say "biggest change is the rounding, check that first"`. Blocks until the human annotates and presses Send. Comments return as TOON, or JSON under `--json`.
+3. Handle each comment by verdict: `fix` edits the code, `explain` writes a justification and changes nothing, `ignore` is acknowledged and dropped.
+4. `cr reply` per comment. Once every `fix`-verdict comment has a reply, `cr refresh` pushes a new snapshot; the tab updates over SSE and threads show the replies. Skip `cr refresh` if nothing in the batch was verdict `fix`, since an `explain` or `ignore` reply changes no code.
+5. Back to step 2. When the response carries `closed: true` with `closedBy: "human"`, the review is over: stop, and do not reopen the session uninvited.
 
-Then ask for a review in your own words, and the agent loads the skill when it recognises the task:
+Each step is what `next_step` says at that point. After `open` it says to run `cr wait` without killing it. After `wait` returns comments it says to reply to each and to locate them by `quote` rather than by line numbers, since a comment re-anchors to its quoted text as the code around it moves. After `wait` times out with nothing sent it says to poll again rather than treating the review as over. Once a payload carries `closed: true` it says to stop and summarise. Structured errors carry one too where there is something specific to do, for example retrying `agent-waiting` or not retrying `usage`; a slug with no specific advice carries none. `--no-help` suppresses `next_step` alongside `help[]`, on the same reasoning: a human reading suppressed output does not want to be instructed either.
 
-> review these changes with me
+If the server dies mid-`wait`, `cr wait` exits 1 with the `server-unreachable` slug so the agent reports the failure rather than looping. Sent comments stay queued; re-running `wait` picks them up.
 
-Or invoke it directly in an agent that exposes skills as slash commands:
+### What comes back
 
-```
-/code-review the payout splitter
-```
+`wait` and `list` print each comment as `id`, `file`, `lines`, `verdict`, `body` and `quote` by default, the fields an agent acts on. `body` is the latest human message in the thread: the opening comment, unless the human has since added a follow-up, in which case it is that follow-up. `--fields all` asks for everything else too (`scope`, `status`, `replies`, `createdAt`, `updatedAt`); `replies` is the whole thread flattened to one string, opening message first, so the agent can see what it already answered. `--fields id,quote` asks for a specific subset. `deliveredAt` is internal delivery bookkeeping and is never available, at any `--fields` value.
 
-**The skill only handles discovery.** It tells the agent that `cr` exists, how to start a session, and the few things that are silently costly to get wrong: locate code by a comment's `quote` rather than its line numbers, honour the verdict, reply to everything. The loop itself is not in the skill, because it is in the output; see below.
+`body` and `quote` truncate past 2000 characters, with a hint naming the field and the total, because a human can quote a 1500-line selection and hand it straight back. `--full` on `wait` or `list` disables this.
 
-The skill is the recommended path but not the only one. Without it, one sentence gets an agent going, and `cr setup` makes a fresh session notice a review on its own.
+`cr reply` prints a minimal confirmation instead: `id`, `status`, `counts` (the same tally `close` prints, `total` plus one entry per comment status present) and `fix` (`outstanding`: verdict-`fix` comments still awaiting a reply; `justFixed`: whether this particular reply answered a verdict-`fix` comment). The agent already knows the body it sent, so nothing else comes back. `next_step` uses `fix` rather than `counts` to decide whether refresh is worth mentioning: while `fix.outstanding` is above zero it says to keep replying; once it drops to zero, `justFixed` says to refresh, and a reply that answered an `explain` says to skip straight to `cr wait`. It keys on the reply just made rather than a running total, so an explain-only reply never claims a refresh is owed just because some earlier fix was answered.
 
-## Driving it from an agent
-
-You do not have to teach your agent the loop. Every payload ends with a `next_step`: one imperative instruction telling the agent what to do next. After `cr open` it says to run `cr wait` and not to kill it; after `wait` returns comments it says to answer each one and then refresh and wait again, without stopping to report back; once a payload carries `closed: true` it says to stop. The agent reads the loop out of the output as it goes.
-
-So all that is needed is the first command. Two ways to get there:
-
-**With the hook installed**, run `cr setup` once, then just start a review in your own terminal:
-
-```sh
-cr open --note "refactored the payout splitter"
-```
-
-Your next agent turn begins by seeing the live session and being told to collect it:
-
-```
-next_step: A review is already open. Run `cr wait` to pick up whatever is waiting.
-```
-
-From there it is hands-off. You annotate, press Send, and the fixes come back without you prompting between rounds.
-
-**Without the hook**, say it once, and keep it short:
-
-> There is a review open, pick it up with `cr`.
-
-Deliberately, a bare `cr` with no session open carries no `next_step`. It falls back to usage, because an agent should not start a review nobody asked for; opening one is the human's call.
-
-`open` starts the session and opens a tab. `wait` blocks until the human sends comments or the session closes. Each comment gets a `cr reply`; once every comment with verdict `fix` has one, `cr refresh` pushes the updated diff into the open tab. A batch with no `fix` comments in it skips refresh entirely, since an `explain` or `ignore` reply changes no code. `cr close` ends the session when the agent is done.
-
-## Verbs
+## CLI reference
 
 ```
 usage: cr <verb> [flags]
@@ -131,22 +160,6 @@ By default `open` reviews the working diff (`git diff HEAD`). `--base <ref>` rev
 
 An unknown verb is a structured error like any other, `code: usage`, so it is safe to parse under `--json` as well as TOON. An unknown *flag* (exit 2) is the one output that stays plain prose: there is no code to branch on, the exit code alone tells the two apart.
 
-## Ambient context
-
-`cr setup` installs a `SessionStart` hook, running this install's `cr` with no arguments via an absolute path rather than one resolved through `PATH`, into Claude Code's settings, so a fresh conversation starts already knowing a review is waiting instead of the agent having to think to ask. It is an explicit, human-run command, never something the tool does on its own: writing to a Claude Code configuration file unasked is not a review tool's business.
-
-By default it targets `.claude/settings.local.json` at the repository root, the personal, git-ignored settings file. `--global` targets `~/.claude/settings.json` instead, for every repository the human works in.
-
-Run it once per machine (or per repository, without `--global`):
-
-```sh
-cr setup
-```
-
-It merges into whatever is already there: an unrelated hook, unrelated settings, all preserved. Running it again reports `already-present` and changes nothing. A settings file that fails to parse is left exactly as it is, and `cr setup` exits 1 rather than risk overwriting it.
-
-To check it worked, open a new Claude Code session in the repository (or, under `--global`, in any repository) after a `cr open` has been started elsewhere: the session should start already showing the live review state that a bare `cr` prints, rather than needing the agent to run `cr` first. This is not covered by any automated test here; it needs a real Claude Code session to observe.
-
 ## Exit codes
 
 | Code | Meaning |
@@ -172,24 +185,6 @@ Every exit-1 error is `{error: {code, message}}` in TOON or JSON. The slugs it u
 | `diff-too-large` | the diff overran git's output buffer; try a narrower base or a smaller diff |
 | `server-error` | the server rejected the request in a way none of the above covers |
 | `error` | an unexpected internal failure the CLI did not classify; report it as a bug rather than branching on it |
-
-## How the agent should drive it
-
-1. `cr open --note "refactored the payout splitter"`. Prints the session URL, opens a tab.
-2. `cr wait --timeout 300 --say "biggest change is the rounding, check that first"`. Blocks until the human annotates and presses Send. Comments return as TOON, or JSON under `--json`.
-3. Handle each comment by verdict: `fix` edits the code, `explain` writes a justification and changes nothing, `ignore` is acknowledged and dropped.
-4. `cr reply` per comment. Once every `fix`-verdict comment has a reply, `cr refresh` pushes a new snapshot; the tab updates over SSE and threads show the replies. Skip `cr refresh` if nothing in the batch was verdict `fix`.
-5. Back to step 2. When the response carries `closed: true` with `closedBy: "human"`, the review is over: stop, and do not reopen the session uninvited.
-
-Every payload carries a `next_step` field, the last key so it prints last: a single imperative instruction telling the agent what to do next, addressed to the agent rather than describing state. `help[]` stays the command templates, ready to paste; `next_step` is the reason to run one of them right now rather than stopping to report to the human. After `open` it says to run `cr wait` without killing it. After `wait` returns comments it says to reply to each and locate them by `quote`, not by line numbers, since a comment re-anchors to its quoted text as the code around it moves. After `wait` times out with nothing sent it says to poll again rather than treating the review as over. Once a payload carries `closed: true` it says to stop and summarise for the human. Structured errors (`{error: {...}}`) carry one too where there is something specific to do, for example retrying `agent-waiting` or not retrying `usage`; a slug with no specific advice carries none. `--no-help` suppresses `next_step` alongside `help[]`, on the same reasoning: a human reading suppressed output does not want to be instructed either.
-
-If the server dies mid-`wait`, `cr wait` exits 1 with the `server-unreachable` slug so the agent reports the failure rather than looping. Sent comments stay queued; re-running `wait` picks them up.
-
-`wait` and `list` print each comment as `id`, `file`, `lines`, `verdict`, `body` and `quote` by default, the fields an agent acts on. `body` is the latest human message in the thread: the opening comment, unless the human has since added a follow-up, in which case it is that follow-up. `--fields all` asks for everything else too (`scope`, `status`, `replies`, `createdAt`, `updatedAt`); `replies` is the whole thread flattened to one string, opening message first, so the agent can see what it already answered. `--fields id,quote` asks for a specific subset. `deliveredAt` is internal delivery bookkeeping and is never available, at any `--fields` value.
-
-`body` and `quote` truncate past 2000 characters, with a hint naming the field and the total, because a human can quote a 1500-line selection and hand it straight back. `--full` on `wait` or `list` disables this.
-
-`cr reply` prints a minimal confirmation instead: `id`, `status`, `counts` (the same tally `close` prints, `total` plus one entry per comment status present) and `fix` (`outstanding`: verdict-`fix` comments still awaiting a reply; `justFixed`: whether this particular reply answered a verdict-`fix` comment). The agent already knows the body it sent, so nothing else comes back. `next_step` uses `fix` rather than `counts` to decide whether refresh is worth mentioning: while `fix.outstanding` is above zero it says to keep replying; once it drops to zero, `justFixed` says to refresh, and a reply that answered an `explain` says to skip straight to `cr wait`. It keys on the reply just made rather than a running total, so an explain-only reply never claims a refresh is owed just because some earlier fix was answered.
 
 ## Security
 
@@ -217,7 +212,7 @@ Deferred to v2, absent by design, so nobody files them as bugs:
 - Posting review comments back to GitHub, or reading existing PR comments.
 - Any provider other than GitHub, or reviewing an arbitrary rev range beyond a base ref.
 
-Of the browser files, `activity.js`, `overlay.js`, `queue.js`, `pair.js` and `highlight.js` are covered by tests, because their logic was deliberately factored out to be testable. `app.js`, the DOM layer itself, has none: it rests on manual verification, and the interactive paths have been exercised by one person rather than proven.
+Of the browser files, `activity.js`, `overlay.js`, `queue.js`, `path-label.js`, `pair.js` and `highlight.js` are covered by tests, because their logic was deliberately factored out to be testable. `app.js`, the DOM layer itself, has none: it rests on manual verification, and the interactive paths have been exercised by one person rather than proven.
 
 ## Development
 
