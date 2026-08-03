@@ -162,7 +162,16 @@ export const startServer = async (options = {}) => {
     if (closed) return;
     closed = true;
     await rm(serverPath(), { force: true });
-    await new Promise((resolve) => server.close(() => resolve(undefined)));
+    await new Promise((resolve) => {
+      server.close(() => resolve(undefined));
+      // close() only stops new connections and then waits for open ones to end.
+      // An SSE stream is keep-alive and never ends, so on its own this left a
+      // daemon with a browser tab attached unreachable but still running: it had
+      // removed its server.json and kept its port for the life of the tab.
+      // Destroying beats waiting for the client to let go, since a tab on stale
+      // assets or already gone at the OS level never will.
+      server.closeAllConnections();
+    });
   };
 
   stop = close;

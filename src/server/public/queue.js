@@ -5,6 +5,13 @@
 
 const QUEUED = ['open'];
 
+/** The statuses each named group collects. */
+export const GROUPS = {
+  queued: ['open'],
+  answered: ['answered'],
+  resolved: ['resolved'],
+};
+
 /**
  * The text the human is about to send: the opening comment, unless a
  * follow-up has been drafted onto an already-answered thread, in which case
@@ -51,8 +58,18 @@ const location = (comment) => {
  * @param {Pick<Session, 'comments'>} session
  * @returns {QueueEntry[]}
  */
-export const queueEntries = (session) => session.comments
-  .filter((c) => QUEUED.includes(c.status))
+export const queueEntries = (session) => groupEntries(session, QUEUED);
+
+/**
+ * The same rows for any group of statuses, so the answered and resolved panels
+ * are the queue panel pointed at a different filter rather than a second
+ * implementation that can drift from it.
+ * @param {Pick<Session, 'comments'>} session
+ * @param {readonly string[]} statuses
+ * @returns {QueueEntry[]}
+ */
+export const groupEntries = (session, statuses) => session.comments
+  .filter((c) => statuses.includes(c.status))
   .map((c) => ({
     id: c.id, file: c.file, verdict: c.verdict, body: queuedText(c), location: location(c),
   }));

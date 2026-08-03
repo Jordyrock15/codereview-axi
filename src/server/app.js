@@ -159,6 +159,41 @@ export const createApp = ({
     }
   };
 
+  /**
+   * Serialises the deliver span per session. One process serves every session,
+   * so a promise chain per key is enough; nothing here crosses processes.
+   * @type {Map<string, Promise<unknown>>}
+   */
+  const deliverChains = new Map();
+
+  /**
+   * @template T
+   * @param {string} key
+   * @param {() => Promise<T>} fn
+   * @returns {Promise<T>}
+   */
+  const deliverLock = (key, fn) => {
+    const prev = deliverChains.get(key) ?? Promise.resolve();
+    // Chained off a settled copy so one poll's failure does not reject the next.
+    const next = prev.then(fn, fn);
+    const settled = next.then(() => {}, () => {});
+    deliverChains.set(key, settled);
+    // Dropped once quiet, and only if nothing has queued behind it since, or a
+    // daemon serving many repos would retain a key per session for its lifetime.
+    void settled.then(() => {
+      if (deliverChains.get(key) === settled) deliverChains.delete(key);
+    });
+    return next;
+  };
+
+  /**
+   * Opens that have been accepted but whose session is not in the state file
+   * yet. buildSnapshot and currentBranch both run before the session is
+   * persisted, so an idle check that only reads persisted state would stop the
+   * daemon out from under an open that is still building its diff.
+   */
+  let opening = 0;
+
   /** @type {Map<string, Set<() => void>>} */
   const waiters = new Map();
 
@@ -192,6 +227,9 @@ export const createApp = ({
    */
   const scheduleIdleStop = () => {
     const timer = setTimeout(async () => {
+      // Rescheduled rather than cancelled: the open may still fail (an empty
+      // diff is a 422), and then nothing is left to serve after all.
+      if (opening > 0) { scheduleIdleStop(); return; }
       const state = await loadState();
       if (!Object.values(state.sessions).some((session) => session.status === 'open')) onIdle();
     }, 250);
@@ -205,88 +243,95 @@ export const createApp = ({
       method: 'POST',
       pattern: '/api/sessions',
       handler: async ({ req, body }) => {
-        const verdict = checkOrigin({ headers: req.headers, port });
-        if (!verdict.ok) throw new StateError(verdict.status, verdict.message);
-
-        const requested = String(body?.repo ?? process.cwd());
-        const root = await toplevel(requested);
-        if (root === null) throw new StateError(400, `${requested} is not inside a git worktree`);
-
-        const base = typeof body?.base === 'string' ? body.base : undefined;
-        const pr = typeof body?.pr === 'number' && Number.isInteger(body.pr) ? body.pr : undefined;
-        if (pr !== undefined && base === undefined) {
-          throw new StateError(400, 'a PR session needs a base as well, none was given');
-        }
-        const at = now();
-        const key = sessionKey(root);
-
-        // A conflict must win over an empty-diff 422, so it is checked here,
-        // before the snapshot is built, on a throwaway state copy (never
-        // persisted; the mutating pass below reaps and rechecks the real
-        // state, so a race here just costs a wasted snapshot, not a bad open).
-        const preState = await loadState();
-        reapSessions(preState, at);
-        assertNoBaseConflict(preState.sessions[key], base, pr);
-
-        let built;
+        // Counted for the whole handler so an early throw (an empty diff is a
+        // 422) cannot leak the count and leave the daemon unable to ever stop.
+        opening += 1;
         try {
-          built = await buildSnapshot(root, base);
-        } catch (err) {
-          throw translateBaseFailure(err, base);
-        }
+          const verdict = checkOrigin({ headers: req.headers, port });
+          if (!verdict.ok) throw new StateError(verdict.status, verdict.message);
 
-        // Read alongside the snapshot so the tab has a short, stable label. The
-        // note cannot serve as one: --say overwrites it every round, so the
-        // header used to be whatever the agent last said.
-        const branch = await currentBranch(root);
+          const requested = String(body?.repo ?? process.cwd());
+          const root = await toplevel(requested);
+          if (root === null) throw new StateError(400, `${requested} is not inside a git worktree`);
 
-        // Building the snapshot is real git work (a diff, a merge-base, every
-        // untracked file read); running it inside mutateState would serialise
-        // it behind every other route, including the long poll's drain. But
-        // the conflict must be decided last, inside the mutex: a session that
-        // opened while this snapshot was building still wins over an
-        // empty-diff 422, which the fast pre-check above cannot guarantee on
-        // its own since it runs before this await, not after it.
-        const { session, reused, snapshot } = await mutateState((state) => {
-          reapSessions(state, at);
-          assertNoBaseConflict(state.sessions[key], base, pr);
+          const base = typeof body?.base === 'string' ? body.base : undefined;
+          const pr = typeof body?.pr === 'number' && Number.isInteger(body.pr) ? body.pr : undefined;
+          if (pr !== undefined && base === undefined) {
+            throw new StateError(400, 'a PR session needs a base as well, none was given');
+          }
+          const at = now();
+          const key = sessionKey(root);
 
-          if (built.files.length === 0) {
-            throw new StateError(422, base !== undefined
-              ? `nothing to review, the branch has no changes against ${base}`
-              : 'nothing to review, the working tree is clean');
+          // A conflict must win over an empty-diff 422, so it is checked here,
+          // before the snapshot is built, on a throwaway state copy (never
+          // persisted; the mutating pass below reaps and rechecks the real
+          // state, so a race here just costs a wasted snapshot, not a bad open).
+          const preState = await loadState();
+          reapSessions(preState, at);
+          assertNoBaseConflict(preState.sessions[key], base, pr);
+
+          let built;
+          try {
+            built = await buildSnapshot(root, base);
+          } catch (err) {
+            throw translateBaseFailure(err, base);
           }
 
-          const result = openOrReuse(state, {
-            repo: root, note: String(body?.note ?? ''), snapshot: built, port, now: at, base, pr,
-          });
-          // Set outside openOrReuse so a reused session picks up a branch
-          // switch since it was opened.
-          result.session.branch = branch;
-          // A reused session's threads are anchored against the old snapshot;
-          // without this a second `cr open` leaves them silently pointing at
-          // whatever now occupies their old line numbers.
-          if (result.reused) reanchor(result.session, built);
-          return { ...result, snapshot: built };
-        });
+          // Read alongside the snapshot so the tab has a short, stable label. The
+          // note cannot serve as one: --say overwrites it every round, so the
+          // header used to be whatever the agent last said.
+          const branch = await currentBranch(root);
 
-        return {
-          status: 201,
-          body: {
-            key: session.key,
-            token: session.token,
-            url: session.url,
-            reused,
-            note: session.note,
-            base: session.base,
-            pr: session.pr,
-            files: snapshot.files.map(fileMeta),
-            totals: snapshot.totals,
-            comments: session.comments.map(({ id, file, startLine, endLine, status, verdict: v }) => (
-              { id, file, startLine, endLine, status, verdict: v }
-            )),
-          },
-        };
+          // Building the snapshot is real git work (a diff, a merge-base, every
+          // untracked file read); running it inside mutateState would serialise
+          // it behind every other route, including the long poll's drain. But
+          // the conflict must be decided last, inside the mutex: a session that
+          // opened while this snapshot was building still wins over an
+          // empty-diff 422, which the fast pre-check above cannot guarantee on
+          // its own since it runs before this await, not after it.
+          const { session, reused, snapshot } = await mutateState((state) => {
+            reapSessions(state, at);
+            assertNoBaseConflict(state.sessions[key], base, pr);
+
+            if (built.files.length === 0) {
+              throw new StateError(422, base !== undefined
+                ? `nothing to review, the branch has no changes against ${base}`
+                : 'nothing to review, the working tree is clean');
+            }
+
+            const result = openOrReuse(state, {
+              repo: root, note: String(body?.note ?? ''), snapshot: built, port, now: at, base, pr,
+            });
+            // Set outside openOrReuse so a reused session picks up a branch
+            // switch since it was opened.
+            result.session.branch = branch;
+            // A reused session's threads are anchored against the old snapshot;
+            // without this a second `cr open` leaves them silently pointing at
+            // whatever now occupies their old line numbers.
+            if (result.reused) reanchor(result.session, built);
+            return { ...result, snapshot: built };
+          });
+
+          return {
+            status: 201,
+            body: {
+              key: session.key,
+              token: session.token,
+              url: session.url,
+              reused,
+              note: session.note,
+              base: session.base,
+              pr: session.pr,
+              files: snapshot.files.map(fileMeta),
+              totals: snapshot.totals,
+              comments: session.comments.map(({ id, file, startLine, endLine, status, verdict: v }) => (
+                { id, file, startLine, endLine, status, verdict: v }
+              )),
+            },
+          };
+        } finally {
+          opening -= 1;
+        }
       },
     },
     {
@@ -363,9 +408,14 @@ export const createApp = ({
         requireOpen(await guarded(ctx));
         // Quote editing is not supported: patchComment has no branch for it, so
         // a quote here would validate and then be silently dropped. No guard.
-        const comment = await mutateState((state) => (
+        // Under deliverLock: an edit resets deliveredAt and rewrites the body, so
+        // landing between a poll's read and its stamp would have the poll stamp
+        // the new text as delivered while its response carried the old, losing
+        // the edit. Serialising against the poll is what rules that out; the
+        // updatedAt check there cannot, being only millisecond-resolution.
+        const comment = await deliverLock(ctx.params.key, () => mutateState((state) => (
           patchComment(state.sessions[ctx.params.key], Number(ctx.params.id), ctx.body ?? {}, now())
-        ));
+        )));
         hub.publish(ctx.params.key, 'comment', comment);
         return { body: comment };
       },
@@ -401,9 +451,12 @@ export const createApp = ({
         const id = Number(ctx.params.id);
         if (!Number.isInteger(id)) throw new StateError(400, 'id must be an integer');
 
-        const comment = await mutateState((state) => (
+        // Same lock as an edit, and for the same reason: a follow-up adds an
+        // undelivered human message, which a poll mid-stamp would mark delivered
+        // without ever having sent it.
+        const comment = await deliverLock(ctx.params.key, () => mutateState((state) => (
           addFollowup(state.sessions[ctx.params.key], id, String(ctx.body?.body ?? ''), now())
-        ));
+        )));
         hub.publish(ctx.params.key, 'comment', comment);
         return { status: 201, body: comment };
       },
@@ -465,43 +518,61 @@ export const createApp = ({
             return { live, sent: live.comments.filter(hasUndeliveredHuman) };
           });
 
-          let { live, sent } = await peek();
-          if (sent.length === 0 && live.status === 'open') {
+          const first = await peek();
+          if (first.sent.length === 0 && first.live.status === 'open') {
             await waitForWake(ctx.params.key, timeoutMs);
-            ({ live, sent } = await peek());
           }
 
-          const withContext = await Promise.all(sent.map(async (comment) => ({
-            ...comment,
-            context: comment.scope === 'line' && comment.file !== null
-              ? await commentContext(live.repo, comment.file, comment.startLine ?? 1, comment.endLine ?? 1, 8)
-              : { before: [], after: [] },
-          })));
+          // Everything from the deciding read to the stamp runs under one lock,
+          // and the wait above sits outside it. takeLease lets a holder re-enter
+          // so that re-polling works, so without this two overlapping polls from
+          // the same pid could both read the same comments, both build a payload,
+          // and both return them while only one stamp landed: at-most-once
+          // delivery would quietly have become at-least-once.
+          // Awaited, not returned bare: a bare `return promise` inside try/finally runs
+          // the finally at the return statement, which would release the lease while
+          // this poll was still building and stamping its payload, letting another
+          // agent in mid-delivery.
+          return await deliverLock(ctx.params.key, async () => {
+            const { live, sent } = await peek();
 
-          // Stamp only once the payload is built. Stamping first meant every
-          // file read for context happened after the comments were already
-          // persisted as delivered, so a poll that died in that window
-          // consumed them for good: the browser showed them sent forever and
-          // no later `cr wait` could ever surface them again. Re-read inside
-          // the mutation rather than stamping the objects captured above, so a
-          // comment edited during the reads is not marked for a payload that
-          // no longer describes it.
-          const delivering = new Set(withContext.map((comment) => comment.id));
-          await mutateState((state) => {
-            const at = new Date(now()).toISOString();
-            for (const comment of state.sessions[ctx.params.key].comments) {
-              if (delivering.has(comment.id) && hasUndeliveredHuman(comment)) markDelivered(comment, at);
-            }
+            const withContext = await Promise.all(sent.map(async (comment) => ({
+              ...comment,
+              context: comment.scope === 'line' && comment.file !== null
+                ? await commentContext(live.repo, comment.file, comment.startLine ?? 1, comment.endLine ?? 1, 8)
+                : { before: [], after: [] },
+            })));
+
+            // Stamp only once the payload is built. Stamping first meant every
+            // file read for context happened after the comments were already
+            // persisted as delivered, so a poll that died in that window
+            // consumed them for good: the browser showed them sent forever and
+            // no later `cr wait` could ever surface them again.
+            //
+            // The guarantee that nothing moved under us is the lock, not this
+            // check: edits and follow-ups take the same one. updatedAt is kept as
+            // a backstop for any future writer that forgets to, and it fails the
+            // safe way, leaving the comment unstamped to be redelivered rather
+            // than stamping text this response never carried. On its own it
+            // would be unsound, being only millisecond-resolution.
+            const seen = new Map(sent.map((comment) => [comment.id, comment.updatedAt]));
+            await mutateState((state) => {
+              const at = new Date(now()).toISOString();
+              for (const comment of state.sessions[ctx.params.key].comments) {
+                if (seen.get(comment.id) !== comment.updatedAt) continue;
+                if (hasUndeliveredHuman(comment)) markDelivered(comment, at);
+              }
+            });
+
+            return {
+              body: {
+                comments: withContext,
+                closed: live.status === 'closed',
+                closedBy: live.closedBy,
+                unsent: unsentCount(live),
+              },
+            };
           });
-
-          return {
-            body: {
-              comments: withContext,
-              closed: live.status === 'closed',
-              closedBy: live.closedBy,
-              unsent: unsentCount(live),
-            },
-          };
         } finally {
           await mutateState((state) => releaseLease(state.sessions[ctx.params.key], holder));
         }

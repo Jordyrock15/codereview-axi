@@ -33,6 +33,11 @@ export const leaseHolder = (session, now) => {
   // tell a live holder from a killed one. The holder is a local pid (the
   // server is loopback-only), so its absence is proof the lease is abandoned;
   // without this, one killed `cr wait` locks the session out for 15 minutes.
+  //
+  // Presence is not proof of the reverse: if the OS has recycled a killed
+  // waiter's pid, an unrelated process reads as the holder and the lease stays
+  // locked until it expires. That is the old behaviour in a much narrower case,
+  // and distinguishing it needs the process start time, not just the pid.
   return alive(session.lease.holder) ? session.lease.holder : null;
 };
 

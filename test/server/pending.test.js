@@ -131,3 +131,28 @@ test('pending releases the lease when it returns', async (t) => {
   const res = await call('GET', at('/pending?holder=222&timeout=1'));
   assert.equal(res.status, 200);
 });
+
+test('two concurrent polls from the same holder deliver a comment once, not twice', async (t) => {
+  const { call, at } = await setup(t);
+  await call('POST', at('/comments'), comment());
+  await call('POST', at('/send'));
+
+  // takeLease lets a holder re-enter, which is what makes re-polling work, so
+  // the lease cannot be what keeps these two apart. Building the payload before
+  // stamping opened a window where both could read the same comment and both
+  // return it; at-most-once delivery has to survive that.
+  //
+  // Timing-dependent, so treat it as a smoke test rather than a proof:
+  // Promise.all does not force both requests past the deciding read before
+  // either stamps, so a broken build could pass if the first finished before the
+  // second started reading. It does fail on an unlocked build in practice,
+  // which is why it is here. Proving it deterministically needs an injection
+  // seam in the context build that createApp does not currently offer.
+  const [a, b] = await Promise.all([
+    call('GET', at('/pending?holder=111&timeout=1')),
+    call('GET', at('/pending?holder=111&timeout=1')),
+  ]);
+
+  const delivered = a.json.comments.length + b.json.comments.length;
+  assert.equal(delivered, 1, 'the comment must arrive in exactly one of the two responses');
+});

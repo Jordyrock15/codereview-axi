@@ -158,3 +158,27 @@ test('POST /api/shutdown with a wrong pid is refused', async (t) => {
   assert.equal(res.status, 403);
   assert.equal((await fetch('http://127.0.0.1:45321/api/health')).status, 200);
 });
+
+test('close finishes even while a client holds a connection open', async (t) => {
+  await withHome(t);
+  const { startServer } = await import('../../src/server/index.js');
+  const server = await startServer({ port: 45322 });
+
+  // A live socket, standing in for the SSE stream a browser tab holds. Node's
+  // server.close() stops new connections and then waits for open ones to end,
+  // and an event stream never ends, so waiting alone left the daemon running
+  // with its port held for as long as the tab lived: unreachable, since
+  // server.json was already gone, but very much alive.
+  const net = await import('node:net');
+  const socket = net.connect(45322, '127.0.0.1');
+  await once(socket, 'connect');
+  t.after(() => socket.destroy());
+
+  const settled = await Promise.race([
+    server.close().then(() => 'closed'),
+    new Promise((resolve) => { const timer = setTimeout(() => resolve('hung'), 3000); timer.unref(); }),
+  ]);
+
+  assert.equal(settled, 'closed', 'shutdown must not wait on a client to let go');
+  await assert.rejects(fetch('http://127.0.0.1:45322/api/health'), 'the port must be free afterwards');
+});

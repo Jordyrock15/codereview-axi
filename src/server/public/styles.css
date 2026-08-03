@@ -113,7 +113,9 @@ body {
 #say { color: var(--mid); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #counts { color: var(--mid); white-space: nowrap; display: flex; align-items: center; gap: 4px; }
 
-#queue-open[aria-expanded="true"] { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+#queue-open[aria-expanded="true"],
+#answered-open[aria-expanded="true"],
+#resolved-open[aria-expanded="true"] { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
 
 #activity { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 #activity:empty { display: none; }
@@ -455,6 +457,9 @@ main {
 .queue-entry-remove:hover { color: var(--del); }
 
 .queue-foot { display: flex; justify-content: flex-end; padding: 10px 12px; border-top: 1px solid var(--hair); }
+/* The footer is only the queue's Send, so it goes when that button does,
+   rather than leaving an empty bordered strip under the answered list. */
+.queue-foot:has(> button[hidden]) { display: none; }
 .queue-foot .primary,
 .queue-foot button:not(:disabled) { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .queue-foot button:not(:disabled):hover { background: var(--accent-hover); border-color: var(--accent-hover); }
