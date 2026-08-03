@@ -376,6 +376,67 @@ test('reply and refresh drive a full round', async (t) => {
   assert.deepEqual(refreshed.stale, []);
 });
 
+test('reply next_step keys on the fix verdict, not on any outstanding reply', async (t) => {
+  const { cr } = await setup(t);
+  const opened = JSON.parse((await cr(['open', '--json'])).out);
+
+  const { loadState } = await import('../../src/state/store.js');
+  const { request } = await import('../../src/cli/client.js');
+  const { readServerFile } = await import('../../src/server/index.js');
+  const { port } = /** @type {{pid: number, port: number, version: string}} */ (await readServerFile());
+  const { token } = (await loadState()).sessions[opened.key];
+
+  // One fix, one explain: a mixed batch. Both are sent so both are outstanding.
+  await request(port, 'POST', `/api/sessions/${opened.key}/comments`, {
+    scope: 'line', file: 'a.js', side: 'new', startLine: 2, endLine: 2,
+    quote: 'TWO', body: 'rounding is wrong', verdict: 'fix',
+  }, token);
+  await request(port, 'POST', `/api/sessions/${opened.key}/comments`, {
+    scope: 'line', file: 'a.js', side: 'new', startLine: 3, endLine: 3,
+    quote: 'three', body: 'why is this a string?', verdict: 'explain',
+  }, token);
+  await request(port, 'POST', `/api/sessions/${opened.key}/send`, {}, token);
+  await cr(['wait', '--timeout', '5', '--json']);
+
+  // The fix is still outstanding (comment 2, the explain, has not been answered
+  // yet either, but only the fix outstanding count drives this branch):
+  // refresh must not be mentioned.
+  const repliedExplainFirst = JSON.parse((await cr(['reply', '--id', '2', '--status', 'explained', '--body', 'because the id is opaque', '--json'])).out);
+  assert.equal(repliedExplainFirst.fix.outstanding, 1);
+  assert.equal(repliedExplainFirst.fix.answered, 0);
+  assert.equal(repliedExplainFirst.next_step, 'Reply to the remaining comments with verdict fix.');
+
+  // The fix is now answered and nothing else with verdict fix is outstanding:
+  // refresh is worth running.
+  const repliedFixSecond = JSON.parse((await cr(['reply', '--id', '1', '--status', 'fixed', '--body', 'distributed the remainder', '--json'])).out);
+  assert.equal(repliedFixSecond.fix.outstanding, 0);
+  assert.equal(repliedFixSecond.fix.answered, 1);
+  assert.equal(repliedFixSecond.next_step, 'Run `cr refresh` so the human sees the fixes, then run `cr wait`.');
+});
+
+test('reply next_step on a pure-explain batch skips refresh entirely, since no code changed', async (t) => {
+  const { cr } = await setup(t);
+  const opened = JSON.parse((await cr(['open', '--json'])).out);
+
+  const { loadState } = await import('../../src/state/store.js');
+  const { request } = await import('../../src/cli/client.js');
+  const { readServerFile } = await import('../../src/server/index.js');
+  const { port } = /** @type {{pid: number, port: number, version: string}} */ (await readServerFile());
+  const { token } = (await loadState()).sessions[opened.key];
+
+  await request(port, 'POST', `/api/sessions/${opened.key}/comments`, {
+    scope: 'line', file: 'a.js', side: 'new', startLine: 2, endLine: 2,
+    quote: 'TWO', body: 'what does this do?', verdict: 'explain',
+  }, token);
+  await request(port, 'POST', `/api/sessions/${opened.key}/send`, {}, token);
+  await cr(['wait', '--timeout', '5', '--json']);
+
+  const replied = JSON.parse((await cr(['reply', '--id', '1', '--status', 'explained', '--body', 'it converts pence to pounds', '--json'])).out);
+  assert.equal(replied.fix.outstanding, 0);
+  assert.equal(replied.fix.answered, 0);
+  assert.equal(replied.next_step, 'Run `cr wait`.');
+});
+
 test('reply exits 1 with not-found on an unknown id, invalid-input on a bad status value', async (t) => {
   const { cr } = await setup(t);
   const opened = JSON.parse((await cr(['open', '--json'])).out);

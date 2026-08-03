@@ -266,8 +266,15 @@ const HANDLERS = {
     const comment = unwrap(await request(port, 'POST', `/api/sessions/${key}/replies`, body, token));
     // The agent just wrote the body; echoing it back is pure cost. counts
     // tells it whether anything else still awaits a reply, matching close.
+    // fix tells nextStep whether refresh is worth mentioning: an explain-only
+    // batch changes no code, so refresh would be a pointless no-op.
     const session = unwrap(await request(port, 'GET', `/api/sessions/${key}`, undefined, token));
-    return { id: comment.id, status: comment.status, counts: commentCounts(session.comments) };
+    return {
+      id: comment.id,
+      status: comment.status,
+      counts: commentCounts(session.comments),
+      fix: fixCounts(session.comments),
+    };
   },
 
   refresh: async ({ cwd, port }) => {
@@ -327,6 +334,23 @@ const commentCounts = (comments) => {
   const counts = { total: comments.length };
   for (const { status } of comments) counts[status] = (counts[status] ?? 0) + 1;
   return counts;
+};
+
+/**
+ * How many verdict-`fix` comments still await a reply, and how many have
+ * ever been answered in this session. `nextStep` uses this, not `counts`,
+ * to decide whether refresh is worth telling the agent to run: `counts` is
+ * keyed by status across every verdict, and an all-`explain` batch would
+ * otherwise still trigger a refresh that reports `relocated: []` for nothing.
+ * @param {{verdict: string, status: string, agentReply: unknown}[]} comments
+ * @returns {{outstanding: number, answered: number}}
+ */
+const fixCounts = (comments) => {
+  const fixes = comments.filter((c) => c.verdict === 'fix');
+  return {
+    outstanding: fixes.filter((c) => c.status === 'sent').length,
+    answered: fixes.filter((c) => c.agentReply !== null).length,
+  };
 };
 
 /**

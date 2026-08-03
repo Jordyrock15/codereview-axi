@@ -27,7 +27,7 @@ cr refresh
 cr close
 ```
 
-`open` starts the session and opens a tab. `wait` blocks until the human sends comments or the session closes. Each comment gets a `cr reply`, then `cr refresh` pushes the updated diff into the open tab. `cr close` ends the session when the agent is done.
+`open` starts the session and opens a tab. `wait` blocks until the human sends comments or the session closes. Each comment gets a `cr reply`; once every comment with verdict `fix` has one, `cr refresh` pushes the updated diff into the open tab. A batch with no `fix` comments in it skips refresh entirely, since an `explain` or `ignore` reply changes no code. `cr close` ends the session when the agent is done.
 
 ## Verbs
 
@@ -106,7 +106,7 @@ Every exit-1 error is `{error: {code, message}}` in TOON or JSON. The slugs it u
 1. `cr open --note "refactored the payout splitter"`. Prints the session URL, opens a tab.
 2. `cr wait --timeout 300 --say "biggest change is the rounding, check that first"`. Blocks until the human annotates and presses Send. Comments return as TOON, or JSON under `--json`.
 3. Handle each comment by verdict: `fix` edits the code, `explain` writes a justification and changes nothing, `ignore` is acknowledged and dropped.
-4. `cr reply` per comment, then `cr refresh` to push a new snapshot; the tab updates over SSE and threads show the replies.
+4. `cr reply` per comment. Once every `fix`-verdict comment has a reply, `cr refresh` pushes a new snapshot; the tab updates over SSE and threads show the replies. Skip `cr refresh` if nothing in the batch was verdict `fix`.
 5. Back to step 2. When the response carries `closed: true` with `closedBy: "human"`, the review is over: stop, and do not reopen the session uninvited.
 
 Every payload carries a `next_step` field, the last key so it prints last: a single imperative instruction telling the agent what to do next, addressed to the agent rather than describing state. `help[]` stays the command templates, ready to paste; `next_step` is the reason to run one of them right now rather than stopping to report to the human. After `open` it says to run `cr wait` without killing it. After `wait` returns comments it says to reply to each and locate them by `quote`, not by line numbers, since a comment re-anchors to its quoted text as the code around it moves. After `wait` times out with nothing sent it says to poll again rather than treating the review as over. Once a payload carries `closed: true` it says to stop and summarise for the human. Structured errors (`{error: {...}}`) carry one too where there is something specific to do, for example retrying `agent-waiting` or not retrying `usage`; a slug with no specific advice carries none. `--no-help` suppresses `next_step` alongside `help[]`, on the same reasoning: a human reading suppressed output does not want to be instructed either.
@@ -117,7 +117,7 @@ If the server dies mid-`wait`, `cr wait` exits 1 with the `server-unreachable` s
 
 `body` and `quote` truncate past 2000 characters, with a hint naming the field and the total, because a human can quote a 1500-line selection and hand it straight back. `--full` on `wait` or `list` disables this.
 
-`cr reply` prints a minimal confirmation instead: `id`, `status` and `counts` (the same tally `close` prints, `total` plus one entry per comment status present). The agent already knows the body it sent, so nothing else comes back.
+`cr reply` prints a minimal confirmation instead: `id`, `status`, `counts` (the same tally `close` prints, `total` plus one entry per comment status present) and `fix` (`outstanding`: verdict-`fix` comments still awaiting a reply; `answered`: verdict-`fix` comments answered so far this session). The agent already knows the body it sent, so nothing else comes back. `next_step` uses `fix` rather than `counts` to decide whether refresh is worth mentioning: while `fix.outstanding` is above zero it says to keep replying; once it drops to zero, `fix.answered` above zero says to refresh, and zero says to skip straight to `cr wait`.
 
 ## Security
 

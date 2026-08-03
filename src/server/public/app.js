@@ -9,6 +9,7 @@
 import { renderLine } from './highlight.js';
 import { pairLines } from './pair.js';
 import { activityState } from './activity.js';
+import { overlayVisible, remainingVisibleMs, OVERLAY_SHOW_DELAY_MS } from './overlay.js';
 
 const key = document.body.dataset.key;
 const token = new URLSearchParams(location.search).get('t') ?? '';
@@ -647,6 +648,47 @@ const done = async () => {
   $('note').textContent = 'Session closed. You can close this tab.';
 };
 
+/** Set once the overlay is actually on screen, so its hide can be timed against it. @type {number|null} */
+let overlayShownAt = null;
+/** @type {ReturnType<typeof setTimeout>|null} */
+let overlayHideTimer = null;
+
+/**
+ * Runs `work` behind the diff overlay, but only reveals it if `work` outlasts
+ * OVERLAY_SHOW_DELAY_MS, so an instant local update never flashes it, and
+ * keeps it up for OVERLAY_MIN_VISIBLE_MS once shown so a fast one never
+ * flickers it away. The `finally` guarantees the overlay clears even if
+ * `work` rejects, so a failed fetch never leaves the pane blocked.
+ * @param {() => Promise<void>} work
+ * @returns {Promise<void>}
+ */
+const withOverlay = async (work) => {
+  const overlay = $('diff-overlay');
+  if (overlayHideTimer !== null) clearTimeout(overlayHideTimer);
+
+  let finished = false;
+  const showTimer = setTimeout(() => {
+    if (overlayVisible({ elapsedMs: OVERLAY_SHOW_DELAY_MS, finished })) {
+      overlay.classList.add('visible');
+      overlayShownAt = Date.now();
+    }
+  }, OVERLAY_SHOW_DELAY_MS);
+
+  try {
+    await work();
+  } finally {
+    finished = true;
+    clearTimeout(showTimer);
+    if (overlayShownAt !== null) {
+      const shownAt = overlayShownAt;
+      overlayHideTimer = setTimeout(() => {
+        overlay.classList.remove('visible');
+        overlayShownAt = null;
+      }, remainingVisibleMs(Date.now() - shownAt));
+    }
+  }
+};
+
 /** @returns {void} */
 const subscribe = () => {
   const badge = $('stream');
@@ -654,7 +696,13 @@ const subscribe = () => {
 
   source.addEventListener('open', () => { badge.textContent = 'connected'; badge.dataset.state = 'up'; });
   source.addEventListener('error', () => { badge.textContent = 'disconnected'; badge.dataset.state = 'down'; });
-  for (const name of ['comment', 'sent', 'refreshed', 'closed', 'note', 'view']) {
+  // `refreshed` is the moment the agent's fix lands and the whole snapshot is
+  // replaced, so it is the one SSE event worth covering with the overlay. The
+  // rest (a new comment, a status change, a note or view toggle) redraw the
+  // same diff and would just train the human to ignore a loader that flashes
+  // for nothing.
+  source.addEventListener('refreshed', () => { void withOverlay(load); });
+  for (const name of ['comment', 'sent', 'closed', 'note', 'view']) {
     source.addEventListener(name, () => { void load(); });
   }
 };
@@ -703,4 +751,4 @@ $('view').addEventListener('click', toggleView);
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape') clearPick(); });
 
 subscribe();
-await load();
+await withOverlay(load);

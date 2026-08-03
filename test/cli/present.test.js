@@ -173,18 +173,29 @@ test('nextStep: any payload with closed: true says stop polling and summarise, r
   assert.match(String(step), /do not reopen/);
 });
 
-test('nextStep: reply with comments still unanswered says to reply to the rest, then refresh and wait', () => {
-  const step = nextStep('reply', { id: 1, status: 'fixed', counts: { total: 3, sent: 2, answered: 1 } });
+test('nextStep: reply with a fix comment still outstanding says to reply to the rest, refresh not mentioned yet', () => {
+  const step = nextStep('reply', { id: 1, status: 'explained', fix: { outstanding: 2, answered: 1 } });
   assert.match(String(step), /remaining comments/);
-  assert.match(String(step), /`cr refresh`/);
-  assert.match(String(step), /`cr wait`/);
+  assert.equal(/`cr refresh`/.test(String(step)), false, 'refresh is premature while fixes are still owed');
 });
 
-test('nextStep: reply with everything answered says to refresh then wait', () => {
-  const step = nextStep('reply', { id: 1, status: 'fixed', counts: { total: 1, answered: 1 } });
+test('nextStep: reply with no fix outstanding, but a fix answered this session, says to refresh then wait', () => {
+  const step = nextStep('reply', { id: 1, status: 'fixed', fix: { outstanding: 0, answered: 1 } });
   assert.match(String(step), /`cr refresh`/);
   assert.match(String(step), /`cr wait`/);
   assert.equal(/remaining comments/.test(String(step)), false);
+});
+
+test('nextStep: reply on a mixed batch, the last reply an explain but a fix answered earlier, still says refresh', () => {
+  // The last reply in this call is explain, which alone would suggest nothing
+  // to refresh, but an earlier fix in the same session makes refresh worth it.
+  const step = nextStep('reply', { id: 2, status: 'explained', fix: { outstanding: 0, answered: 1 } });
+  assert.match(String(step), /`cr refresh`/);
+});
+
+test('nextStep: reply on a pure-explain batch, no fix comments involved at all, skips refresh entirely', () => {
+  const step = nextStep('reply', { id: 1, status: 'explained', fix: { outstanding: 0, answered: 0 } });
+  assert.equal(step, 'Run `cr wait`.');
 });
 
 test('nextStep: refresh says to run cr wait', () => {

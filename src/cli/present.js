@@ -145,10 +145,14 @@ export const nextStep = (verb, payload) => {
   }
 
   if (verb === 'reply') {
-    const stillSent = typeof payload?.counts?.sent === 'number' ? payload.counts.sent : 0;
-    return stillSent > 0
-      ? 'Reply to the remaining comments, then run `cr refresh` and `cr wait`.'
-      : 'Run `cr refresh` so the human sees the fixes, then run `cr wait`.';
+    const outstanding = typeof payload?.fix?.outstanding === 'number' ? payload.fix.outstanding : 0;
+    const answered = typeof payload?.fix?.answered === 'number' ? payload.fix.answered : 0;
+    // Keyed on verdict fix, not on status alone: an explain or ignore reply
+    // changes no code, so refresh is either premature (fixes still owed) or
+    // a pointless no-op (no fix was ever involved) rather than something to run.
+    if (outstanding > 0) return 'Reply to the remaining comments with verdict fix.';
+    if (answered > 0) return 'Run `cr refresh` so the human sees the fixes, then run `cr wait`.';
+    return 'Run `cr wait`.';
   }
 
   if (verb === 'refresh') return 'Run `cr wait`.';

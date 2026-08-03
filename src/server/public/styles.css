@@ -129,7 +129,41 @@ main { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); mi
 #files .gen { opacity: 0.65; }
 #files .count { color: var(--accent); }
 
+#diff-wrap { position: relative; min-width: 0; }
 #diff { overflow-x: auto; }
+
+/* A translucent scrim, not a full-page block: the human keeps their bearings
+   on the file list and header while the diff itself is being replaced. */
+#diff-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: var(--radius-xl);
+  background: color-mix(in srgb, var(--ink-900) 72%, transparent);
+  color: var(--ink);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur) var(--ease);
+  z-index: 1;
+}
+
+#diff-overlay.visible { opacity: 1; pointer-events: auto; }
+
+#diff-overlay .spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-pill);
+  border: 2px solid var(--hair);
+  border-top-color: var(--accent);
+  /* The blanket prefers-reduced-motion rule below collapses this to one
+     imperceptible frame, leaving a static ring rather than a spin. */
+  animation: cr-spin 0.8s linear infinite;
+}
+
+@keyframes cr-spin { to { transform: rotate(360deg); } }
 
 .filehead {
   display: flex;

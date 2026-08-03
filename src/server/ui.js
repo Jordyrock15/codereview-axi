@@ -44,7 +44,10 @@ export const shellHtml = (key) => `<!doctype html>
 </header>
 <main>
   <nav id="files" aria-label="Changed files"></nav>
-  <section id="diff" aria-label="Diff"></section>
+  <div id="diff-wrap">
+    <section id="diff" aria-label="Diff"></section>
+    <div id="diff-overlay" aria-hidden="true"><span class="spinner"></span>Updating</div>
+  </div>
 </main>
 <script type="module" src="/assets/app.js"></script>
 </body>
