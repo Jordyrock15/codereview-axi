@@ -4,7 +4,9 @@
 
 ### Review your agent's diff where the code is, not in the chat log.
 
-![A cr review session: the payout splitter's diff, a human's question about negative takings, and the agent's answer threaded underneath it](https://raw.githubusercontent.com/Jordyrock15/codereview-axi/main/media/session.png)
+![A cr review session: a diff with a human's question threaded under the line it is about, the agent's answer beneath it, and Queued, Answered and Resolved counts in the header](https://raw.githubusercontent.com/Jordyrock15/codereview-axi/main/media/session.png)
+
+![The Resolved panel open over the diff, listing a resolved thread by file and line, clickable to jump back to it](https://raw.githubusercontent.com/Jordyrock15/codereview-axi/main/media/groups.png)
 
 Reviewing an agent-written diff in a terminal loses the anchor between a comment and the code it is about: line numbers scroll past, and the context is gone by the time a reply arrives.
 
@@ -102,7 +104,12 @@ The browser tab is where you do the reviewing; everything else is the agent's si
 - **Queued n** in the header lists everything drafted, so you can read the batch back and remove anything before committing to it.
 - **Send** hands the whole batch over. The header then reads `waiting for agent` until it collects them, and `agent has it` while it works.
 - Answers arrive **threaded under your comment**, and the diff refreshes in place once the agent has made its changes. **Reply** adds a follow-up to the same thread; **Resolve** closes it.
-- **Done** ends the session and tells the agent to stop.
+- **Answered n** and **Resolved n** sit beside Queued and open the same panel on a different group, so a thread you resolve collects somewhere you can find it again. Clicking any row jumps to that comment, switching file first if it is in another one. Only queued rows offer **Remove**: an answered comment has already been sent, and dropping it would take the agent's reply with it.
+- **Done** ends the session and tells the agent to stop. The header then reads `disconnected`, and the server shuts itself down once no session is left open.
+
+The header carries the branch you are reviewing and its base, with whatever the agent last said to you dimmed beside it. The sidebar counts each file's added and removed lines in the diff's own green and red, and shows a file's open comment count instead once it has any.
+
+Long lines wrap rather than scrolling sideways, and the sidebar and the diff scroll independently, so a long file list does not cost you your place in the diff.
 
 A comment is anchored to the **text** you selected, not to a line number, so it follows the code as the agent edits around it. If the quoted text disappears entirely the comment is marked `stale` rather than silently pointing at the wrong line.
 
@@ -188,7 +195,7 @@ Every exit-1 error is `{error: {code, message}}` in TOON or JSON. The slugs it u
 
 ## Security
 
-- The server binds to loopback only; it is never reachable from another machine.
+- The server binds to loopback only; it is never reachable from another machine. It starts on demand and stops itself once the last open session closes, so a finished review leaves no process behind holding a port.
 - Each session gets a random per-session token, required on every API request either as an `x-cr-token` header or a `?t=` query parameter.
 - Every request is checked against the Host header and, when present, the Origin header; anything that is not `127.0.0.1` or `localhost` on the session's own port is rejected.
 - State is written to `~/.codereview-axi/state.json` with file mode `0600`.
