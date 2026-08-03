@@ -1,4 +1,4 @@
-import { toplevel } from '../diff/git.js';
+import { toplevel, currentBranch } from '../diff/git.js';
 import { buildSnapshot as defaultBuildSnapshot } from '../diff/snapshot.js';
 import { mutateState, loadState } from '../state/store.js';
 import {
@@ -69,10 +69,11 @@ const fileMeta = ({ path, status, added, removed, tags, binary }) => ({ path, st
 const publicSession = ({ token, ...rest }) => rest;
 
 /**
- * @param {{port: number, now?: () => number, hub?: ReturnType<typeof createHub>, buildSnapshot?: typeof defaultBuildSnapshot}} options
+ * @param {{port: number, now?: () => number, hub?: ReturnType<typeof createHub>, buildSnapshot?: typeof defaultBuildSnapshot, onIdle?: () => void}} options
  */
 export const createApp = ({
   port, now = () => Date.now(), hub = createHub(), buildSnapshot = defaultBuildSnapshot,
+  onIdle = () => {},
 }) => {
   /**
    * Loads a session and applies the full guard. Throws on any failure.
@@ -180,6 +181,24 @@ export const createApp = ({
     set.add(done);
   });
 
+  /**
+   * Re-reads the state when the timer fires rather than trusting the check that
+   * scheduled it. `cr close` followed straight away by `cr open` is ordinary
+   * use, and deciding at schedule time would shoot the daemon out from under
+   * the session that had just opened. Every session in the file is considered,
+   * not just this repo's: one daemon serves them all, so another repo's open
+   * review has to keep it alive.
+   * @returns {void}
+   */
+  const scheduleIdleStop = () => {
+    const timer = setTimeout(async () => {
+      const state = await loadState();
+      if (!Object.values(state.sessions).some((session) => session.status === 'open')) onIdle();
+    }, 250);
+    // Never the reason the process stays up.
+    timer.unref();
+  };
+
   /** @type {import('./router.js').Route[]} */
   const routes = [
     {
@@ -216,6 +235,11 @@ export const createApp = ({
           throw translateBaseFailure(err, base);
         }
 
+        // Read alongside the snapshot so the tab has a short, stable label. The
+        // note cannot serve as one: --say overwrites it every round, so the
+        // header used to be whatever the agent last said.
+        const branch = await currentBranch(root);
+
         // Building the snapshot is real git work (a diff, a merge-base, every
         // untracked file read); running it inside mutateState would serialise
         // it behind every other route, including the long poll's drain. But
@@ -236,6 +260,9 @@ export const createApp = ({
           const result = openOrReuse(state, {
             repo: root, note: String(body?.note ?? ''), snapshot: built, port, now: at, base, pr,
           });
+          // Set outside openOrReuse so a reused session picks up a branch
+          // switch since it was opened.
+          result.session.branch = branch;
           // A reused session's threads are anchored against the old snapshot;
           // without this a second `cr open` leaves them silently pointing at
           // whatever now occupies their old line numbers.
@@ -303,6 +330,11 @@ export const createApp = ({
 
         const session = await mutateState((state) => closeSession(state.sessions[ctx.params.key], closedBy, now()));
         hub.publish(session.key, 'closed', { closedBy });
+
+        // With nothing open anywhere, the daemon has nothing left to serve.
+        // Neither `cr close` nor the browser's Done used to stop it, so every
+        // finished review left a process behind and the port range filled up.
+        scheduleIdleStop();
         wake(session.key);
         return { body: publicSession(session) };
       },
@@ -428,18 +460,15 @@ export const createApp = ({
           // rather than per comment: a follow-up on a comment already
           // delivered once must still surface, and a re-poll after a crash
           // must not replay a message this round already stamped.
-          const drain = () => mutateState((state) => {
+          const peek = () => mutateState((state) => {
             const live = state.sessions[ctx.params.key];
-            const sent = live.comments.filter(hasUndeliveredHuman);
-            const at = new Date(now()).toISOString();
-            for (const comment of sent) markDelivered(comment, at);
-            return { live, sent };
+            return { live, sent: live.comments.filter(hasUndeliveredHuman) };
           });
 
-          let { live, sent } = await drain();
+          let { live, sent } = await peek();
           if (sent.length === 0 && live.status === 'open') {
             await waitForWake(ctx.params.key, timeoutMs);
-            ({ live, sent } = await drain());
+            ({ live, sent } = await peek());
           }
 
           const withContext = await Promise.all(sent.map(async (comment) => ({
@@ -448,6 +477,22 @@ export const createApp = ({
               ? await commentContext(live.repo, comment.file, comment.startLine ?? 1, comment.endLine ?? 1, 8)
               : { before: [], after: [] },
           })));
+
+          // Stamp only once the payload is built. Stamping first meant every
+          // file read for context happened after the comments were already
+          // persisted as delivered, so a poll that died in that window
+          // consumed them for good: the browser showed them sent forever and
+          // no later `cr wait` could ever surface them again. Re-read inside
+          // the mutation rather than stamping the objects captured above, so a
+          // comment edited during the reads is not marked for a payload that
+          // no longer describes it.
+          const delivering = new Set(withContext.map((comment) => comment.id));
+          await mutateState((state) => {
+            const at = new Date(now()).toISOString();
+            for (const comment of state.sessions[ctx.params.key].comments) {
+              if (delivering.has(comment.id) && hasUndeliveredHuman(comment)) markDelivered(comment, at);
+            }
+          });
 
           return {
             body: {

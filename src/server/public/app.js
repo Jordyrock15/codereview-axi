@@ -278,7 +278,13 @@ const renderFiles = () => {
     if (dir) label.append(el('span', 'dir', dir));
     label.append(el('span', 'base', base));
     button.append(label);
-    button.append(el('span', 'count', open === 0 ? `+${file.added} -${file.removed}` : String(open)));
+    const count = el('span', 'count');
+    if (open === 0) {
+      count.append(el('span', 'added', `+${file.added}`), el('span', 'removed', `-${file.removed}`));
+    } else {
+      count.textContent = String(open);
+    }
+    button.append(count);
     button.title = file.path;
     button.setAttribute('aria-current', String(file.path === view.current));
     button.addEventListener('click', () => { view.current = file.path; renderDiff(); renderFiles(); });
@@ -815,6 +821,31 @@ const send = async () => {
   if (res.ok) await load();
 };
 
+/** @type {EventSource|null} */
+let stream = null;
+
+/**
+ * The terminal state, reached whether the human pressed Done or the agent ran
+ * `cr close`. Closing the EventSource is what keeps the badge from flapping
+ * back to connected: the browser retries a dropped stream by itself, and the
+ * daemon now exits once the last session closes, so those retries would fail
+ * forever against a port with nothing behind it.
+ * @returns {void}
+ */
+const markClosed = () => {
+  /** @type {HTMLButtonElement} */ ($('send')).disabled = true;
+  /** @type {HTMLButtonElement} */ ($('done')).disabled = true;
+  // Into the children, not #note itself: overwriting #note would delete #ident
+  // and #say, and the next render would look up elements that no longer exist.
+  $('ident').textContent = 'Session closed';
+  $('say').textContent = 'You can close this tab.';
+
+  stream?.close();
+  const badge = $('stream');
+  badge.textContent = 'disconnected';
+  badge.dataset.state = 'down';
+};
+
 /** @returns {Promise<void>} */
 const done = async () => {
   // Closing is irreversible: a closed session's comments and replies are not kept.
@@ -826,9 +857,7 @@ const done = async () => {
   // Never claim the session closed unless the server agreed.
   if (!res.ok) return;
 
-  /** @type {HTMLButtonElement} */ ($('send')).disabled = true;
-  /** @type {HTMLButtonElement} */ ($('done')).disabled = true;
-  $('note').textContent = 'Session closed. You can close this tab.';
+  markClosed();
 };
 
 /** Set once the overlay is actually on screen, so its hide can be timed against it. @type {number|null} */
@@ -890,6 +919,7 @@ const withOverlay = async (work, options = {}) => {
 const subscribe = () => {
   const badge = $('stream');
   const source = new EventSource(`/api/sessions/${key}/stream?t=${encodeURIComponent(token)}`);
+  stream = source;
 
   source.addEventListener('open', () => { badge.textContent = 'connected'; badge.dataset.state = 'up'; });
   source.addEventListener('error', () => { badge.textContent = 'disconnected'; badge.dataset.state = 'down'; });
@@ -904,16 +934,20 @@ const subscribe = () => {
     minVisibleMs: OVERLAY_REFRESHED_MIN_VISIBLE_MS,
     label: 'Refreshing',
   }); });
-  for (const name of ['comment', 'sent', 'closed', 'note', 'view']) {
+  for (const name of ['comment', 'sent', 'note', 'view']) {
     source.addEventListener(name, () => { void load(); });
   }
+
+  // Kept out of the list above: `cr close` has to reach the same terminal state
+  // as the Done button, and load() on its own leaves the tab looking live.
+  source.addEventListener('closed', () => { void load().then(markClosed); });
 };
 
 /** @returns {Promise<void>} */
 const load = async () => {
   const res = await api('');
   if (!res.ok) {
-    $('note').textContent = res.status === 401
+    $('say').textContent = res.status === 401
       ? 'This link is missing its token. Reopen the session from the terminal.'
       : `Cannot load this session (${res.status}).`;
     return;
@@ -922,15 +956,20 @@ const load = async () => {
   const session = await res.json();
   view.session = session;
   view.current ??= session.snapshot.files[0]?.path ?? null;
-  const comparison = session.pr
-    ? `reviewing PR ${session.pr} against ${session.base}`
-    : session.base
-      ? `against ${session.base}`
-      : '';
-  const noteText = session.note || 'no note';
-  const fullNote = comparison ? `${comparison}: ${noteText}` : noteText;
-  $('note').textContent = fullNote;
-  $('note').title = fullNote;
+  // A short, stable label, kept apart from the message. --say rewrites the
+  // note every round, so using it as the header made the title as long as
+  // whatever the agent last said.
+  const ident = session.pr
+    ? `PR #${session.pr} → ${session.base}`
+    : session.branch
+      ? `${session.branch}${session.base ? ` → ${session.base}` : ''}`
+      : session.base
+        ? `→ ${session.base}`
+        : 'working tree';
+  const said = session.note || '';
+  $('ident').textContent = ident;
+  $('say').textContent = said;
+  $('note').title = said ? `${ident}: ${said}` : ident;
   // The label names what clicking will switch to, read from the session so two
   // tabs cannot disagree, never from local state.
   $('view').textContent = session.view === 'split' ? 'unified' : 'split';

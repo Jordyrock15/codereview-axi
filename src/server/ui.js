@@ -34,17 +34,22 @@ export const shellHtml = (key) => `<!doctype html>
 </head>
 <body data-key="${escapeHtml(key)}" data-large="${LARGE_FILE_LINES}">
 <header id="bar">
-  <span id="note"></span>
-  <span id="counts">
-    <span id="counts-unsent">0 unsent</span>
-    <span id="counts-rest">· 0 answered · 0 stale</span>
+  <span id="note">
+    <span id="ident"></span>
+    <span id="say"></span>
   </span>
-  <span id="activity" data-delivery="idle"></span>
-  <button id="view" title="Toggle side-by-side">split</button>
-  <button id="queue-open" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="queue-panel">Queued 0</button>
-  <button id="send" disabled>Send</button>
-  <button id="done">Done</button>
-  <span id="stream" title="event stream">connecting</span>
+  <div id="bar-row">
+    <span id="counts">
+      <span id="counts-unsent">0 unsent</span>
+      <span id="counts-rest">· 0 answered · 0 stale</span>
+    </span>
+    <span id="activity" data-delivery="idle"></span>
+    <button id="view" title="Toggle side-by-side">split</button>
+    <button id="queue-open" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="queue-panel">Queued 0</button>
+    <button id="send" disabled>Send</button>
+    <button id="done">Done</button>
+    <span id="stream" title="event stream">connecting</span>
+  </div>
 </header>
 <div id="queue-panel" role="region" aria-label="Queued comments" hidden>
   <div class="queue-head">
