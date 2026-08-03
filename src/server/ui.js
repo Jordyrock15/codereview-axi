@@ -46,6 +46,8 @@ export const shellHtml = (key) => `<!doctype html>
     <span id="activity" data-delivery="idle"></span>
     <button id="view" title="Toggle side-by-side">split</button>
     <button id="queue-open" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="queue-panel">Queued 0</button>
+    <button id="answered-open" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="queue-panel">Answered 0</button>
+    <button id="resolved-open" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="queue-panel">Resolved 0</button>
     <button id="send" disabled>Send</button>
     <button id="done">Done</button>
     <span id="stream" title="event stream">connecting</span>
@@ -53,7 +55,7 @@ export const shellHtml = (key) => `<!doctype html>
 </header>
 <div id="queue-panel" role="region" aria-label="Queued comments" hidden>
   <div class="queue-head">
-    <span>Queue</span>
+    <span id="queue-title">Queue</span>
     <button id="queue-close" type="button" aria-label="Close queue">✕</button>
   </div>
   <div id="queue-list"></div>

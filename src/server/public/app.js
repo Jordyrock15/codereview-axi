@@ -13,7 +13,7 @@ import {
   overlayVisible, remainingVisibleMs, OVERLAY_SHOW_DELAY_MS, OVERLAY_MIN_VISIBLE_MS,
   OVERLAY_REFRESHED_SHOW_DELAY_MS, OVERLAY_REFRESHED_MIN_VISIBLE_MS,
 } from './overlay.js';
-import { queueEntries } from './queue.js';
+import { queueEntries, groupEntries, GROUPS } from './queue.js';
 import { splitPathLabel } from './path-label.js';
 
 const key = document.body.dataset.key;
@@ -127,9 +127,15 @@ const counts = () => {
   const answered = comments.filter((c) => c.status === 'answered').length;
   const stale = comments.filter((c) => c.status === 'stale').length;
 
-  $('counts-unsent').textContent = `${unsent} unsent`;
-  $('counts-rest').textContent = `· ${answered} answered · ${stale} stale`;
+  const resolved = comments.filter((c) => c.status === 'resolved').length;
+
+  // unsent and answered are the Queued and Answered buttons' own numbers, so
+  // only stale is left to report as text, and only when there is any.
+  $('counts-unsent').textContent = stale === 0 ? '' : `${stale} stale`;
+  $('counts-rest').textContent = '';
   $('queue-open').textContent = `Queued ${unsent}`;
+  $('answered-open').textContent = `Answered ${answered}`;
+  $('resolved-open').textContent = `Resolved ${resolved}`;
   const send = /** @type {HTMLButtonElement} */ ($('send'));
   send.disabled = unsent === 0;
   send.textContent = unsent === 0 ? 'Send' : `Send ${unsent}`;
@@ -138,8 +144,31 @@ const counts = () => {
   queueSend.textContent = unsent === 0 ? 'Send' : `Send ${unsent}`;
 };
 
-/** Whether the queue panel is currently open. Survives a re-render like `view.current` does. */
-let queueOpen = false;
+/**
+ * Which group the panel is showing, or null when it is shut. Survives a
+ * re-render like `view.current` does.
+ * @type {keyof typeof GROUPS | null}
+ */
+let panelGroup = null;
+
+/** @type {Record<keyof typeof GROUPS, {toggle: string, title: string, empty: string}>} */
+const PANELS = {
+  queued: {
+    toggle: 'queue-open',
+    title: 'Queue',
+    empty: 'Nothing queued. Draft a comment on the diff and it will show up here before you send it.',
+  },
+  answered: {
+    toggle: 'answered-open',
+    title: 'Answered',
+    empty: 'Nothing answered yet. Comments the agent has replied to collect here.',
+  },
+  resolved: {
+    toggle: 'resolved-open',
+    title: 'Resolved',
+    empty: 'Nothing resolved yet. Threads you close with Resolve collect here.',
+  },
+};
 
 /** @returns {boolean} */
 const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -150,17 +179,21 @@ const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)'
  */
 const onQueueOutsideClick = (event) => {
   const panel = $('queue-panel');
-  const toggle = $('queue-open');
   const target = /** @type {Node|null} */ (event.target);
-  if (target && (panel.contains(target) || toggle.contains(target))) return;
+  if (!target) return;
+  if (panel.contains(target)) return;
+  // Every toggle, not just the queue's: clicking one while another group is
+  // showing has to switch groups rather than be treated as an outside click.
+  if (Object.values(PANELS).some((p) => $(p.toggle).contains(target))) return;
   closeQueuePanel();
 };
 
 /**
  * @param {import('./queue.js').QueueEntry} entry
+ * @param {boolean} removable
  * @returns {HTMLElement}
  */
-const queueEntryEl = (entry) => {
+const queueEntryEl = (entry, removable) => {
   const row = el('div', 'queue-entry');
 
   const open = /** @type {HTMLButtonElement} */ (el('button', 'queue-entry-open'));
@@ -171,6 +204,13 @@ const queueEntryEl = (entry) => {
     el('span', 'queue-entry-body', entry.body),
   );
   open.addEventListener('click', () => { scrollToComment(entry.id); closeQueuePanel(); });
+
+  // Only a queued comment can be withdrawn; an answered or resolved one has
+  // already been sent, and deleting it would drop the agent's reply with it.
+  if (!removable) {
+    row.append(open);
+    return row;
+  }
 
   const remove = /** @type {HTMLButtonElement} */ (el('button', 'queue-entry-remove', 'Remove'));
   remove.type = 'button';
@@ -192,33 +232,51 @@ const renderQueuePanel = () => {
   const list = $('queue-list');
   list.replaceChildren();
 
-  const entries = view.session ? queueEntries(view.session) : [];
+  const group = panelGroup ?? 'queued';
+  const config = PANELS[group];
+  $('queue-title').textContent = config.title;
+
+  const entries = view.session ? groupEntries(view.session, GROUPS[group]) : [];
   if (entries.length === 0) {
-    list.append(el('p', 'queue-empty', 'Nothing queued. Draft a comment on the diff and it will show up here before you send it.'));
+    list.append(el('p', 'queue-empty', config.empty));
   } else {
-    for (const entry of entries) list.append(queueEntryEl(entry));
+    for (const entry of entries) list.append(queueEntryEl(entry, group === 'queued'));
   }
 
-  panel.hidden = !queueOpen;
-  $('queue-open').setAttribute('aria-expanded', String(queueOpen));
+  // Send belongs to the queue: there is nothing to send from the other groups.
+  $('queue-send').hidden = group !== 'queued';
+
+  panel.hidden = panelGroup === null;
+  for (const [name, panelConfig] of Object.entries(PANELS)) {
+    $(panelConfig.toggle).setAttribute('aria-expanded', String(panelGroup === name));
+  }
 };
 
-/** @returns {void} */
-const openQueuePanel = () => {
-  queueOpen = true;
+/**
+ * @param {keyof typeof GROUPS} group
+ * @returns {void}
+ */
+const openQueuePanel = (group) => {
+  panelGroup = group;
   renderQueuePanel();
   document.addEventListener('mousedown', onQueueOutsideClick);
 };
 
 /** @returns {void} */
 const closeQueuePanel = () => {
-  queueOpen = false;
+  panelGroup = null;
   renderQueuePanel();
   document.removeEventListener('mousedown', onQueueOutsideClick);
 };
 
-/** @returns {void} */
-const toggleQueuePanel = () => { if (queueOpen) closeQueuePanel(); else openQueuePanel(); };
+/**
+ * @param {keyof typeof GROUPS} group
+ * @returns {void}
+ */
+const toggleQueuePanel = (group) => {
+  if (panelGroup === group) closeQueuePanel();
+  else openQueuePanel(group);
+};
 
 /**
  * Switches to the comment's file if needed (the same path the files-nav
@@ -990,14 +1048,16 @@ const toggleView = async () => {
 $('send').addEventListener('click', send);
 $('done').addEventListener('click', done);
 $('view').addEventListener('click', toggleView);
-$('queue-open').addEventListener('click', toggleQueuePanel);
+$('queue-open').addEventListener('click', () => toggleQueuePanel('queued'));
+$('answered-open').addEventListener('click', () => toggleQueuePanel('answered'));
+$('resolved-open').addEventListener('click', () => toggleQueuePanel('resolved'));
 $('queue-close').addEventListener('click', closeQueuePanel);
 $('queue-send').addEventListener('click', async () => { await send(); closeQueuePanel(); });
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
   // The panel takes priority: closing it must not also discard an unrelated
   // in-progress composer, which clearPick() would do.
-  if (queueOpen) { closeQueuePanel(); return; }
+  if (panelGroup !== null) { closeQueuePanel(); return; }
   clearPick();
 });
 
