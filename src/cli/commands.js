@@ -15,7 +15,9 @@ import {
   USAGE, verbHelp, unknownFlags, checkArity, booleanFlagNames,
 } from './spec.js';
 import { encode } from './toon.js';
-import { presentComment, selectFields, nextSteps } from './present.js';
+import {
+  presentComment, selectFields, nextSteps, nextStep,
+} from './present.js';
 import { installHook } from './setup.js';
 
 export { USAGE } from './spec.js';
@@ -389,8 +391,19 @@ export const run = async ({
   const asText = (/** @type {unknown} */ value) => (
     flags.json === true ? JSON.stringify(value, null, 2) : encode(/** @type {any} */ (value))
   );
+  /**
+   * @param {string} slug
+   * @param {string} message
+   * @returns {Record<string, unknown>}
+   */
+  const errorPayload = (slug, message) => {
+    /** @type {Record<string, unknown>} */
+    const payload = { error: { code: slug, message } };
+    const step = flags['no-help'] === true ? undefined : nextStep('error', payload);
+    return step === undefined ? payload : { ...payload, next_step: step };
+  };
   /** @param {CliError} err */
-  const fail = (err) => ({ code: err.code, out: asText({ error: { code: err.slug, message: err.message } }) });
+  const fail = (err) => ({ code: err.code, out: asText(errorPayload(err.slug, err.message)) });
 
   // `help` is not a real handler: it is what a bare `cr`, or the literal
   // word `help`, resolves to (see parseArgs). It still has a VERBS entry, so
@@ -426,8 +439,9 @@ export const run = async ({
   if (verb === 'help') {
     const live = await liveState(cwd);
     if (live === null) return { code: 0, out: USAGE };
-    const withHelp = flags['no-help'] === true ? live : { ...live, help: nextSteps(verb, live) };
-    return { code: 0, out: asText(withHelp) };
+    if (flags['no-help'] === true) return { code: 0, out: asText(live) };
+    const withHelp = { ...live, help: nextSteps(verb, live) };
+    return { code: 0, out: asText({ ...withHelp, next_step: nextStep(verb, live) }) };
   }
 
   // Unreachable in practice: the hasOwn check above already failed any verb
@@ -443,15 +457,15 @@ export const run = async ({
       flags, cwd, port, resolvePr, homedir,
     });
     const payload = /** @type {Record<string, unknown>} */ (forDisplay(result));
-    const withHelp = flags['no-help'] === true
-      ? payload
-      : { ...payload, help: nextSteps(verb, payload) };
-    return { code: 0, out: asText(withHelp) };
+    if (flags['no-help'] === true) return { code: 0, out: asText(payload) };
+    const withHelp = { ...payload, help: nextSteps(verb, payload) };
+    const step = nextStep(verb, payload);
+    return { code: 0, out: asText(step === undefined ? withHelp : { ...withHelp, next_step: step }) };
   } catch (err) {
     const code = err instanceof CliError ? err.code : 1;
     const slug = err instanceof CliError ? err.slug : 'error';
     const message = err instanceof Error ? err.message : String(err);
-    return { code, out: asText({ error: { code: slug, message } }) };
+    return { code, out: asText(errorPayload(slug, message)) };
   }
 };
 

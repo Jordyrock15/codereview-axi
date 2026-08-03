@@ -858,6 +858,36 @@ test('help[] lines are appended by default and suppressed by --no-help', async (
   assert.equal(/^help\[/m.test(without.out), false);
 });
 
+test('next_step is present by default, suppressed by --no-help, and is the last key', async (t) => {
+  await isolateHome(t);
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+  await repo.write('a.js', 'two\n');
+
+  const withStep = await run({ argv: ['open', '--json', '--no-browser'], cwd: repo.dir });
+  const parsed = JSON.parse(withStep.out);
+  assert.equal(typeof parsed.next_step, 'string');
+  assert.match(parsed.next_step, /`cr wait`/);
+  assert.deepEqual(Object.keys(parsed).slice(-1), ['next_step']);
+
+  const without = await run({ argv: ['open', '--no-browser', '--no-help'], cwd: repo.dir });
+  assert.equal(/next_step/.test(without.out), false);
+});
+
+test('a structured error carries a next_step too, and --no-help suppresses it', async (t) => {
+  await isolateHome(t);
+  const repo = await makeRepo({ 'a.js': 'one\n' });
+  t.after(repo.cleanup);
+
+  const result = await run({ argv: ['open', '--json', '--no-browser'], cwd: repo.dir });
+  const parsed = JSON.parse(result.out);
+  assert.equal(parsed.error.code, 'nothing-to-review');
+  assert.match(parsed.next_step, /do not retry/);
+
+  const without = await run({ argv: ['open', '--no-browser', '--no-help'], cwd: repo.dir });
+  assert.equal(/next_step/.test(without.out), false);
+});
+
 test('--json output is parseable with help[] present', async (t) => {
   await isolateHome(t);
   const repo = await makeRepo({ 'a.js': 'one\n' });

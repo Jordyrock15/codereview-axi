@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DEFAULT_COMMENT_FIELDS, AGENT_COMMENT_FIELDS, presentComment, selectFields, TRUNCATE_AT, truncate, nextSteps,
+  DEFAULT_COMMENT_FIELDS, AGENT_COMMENT_FIELDS, presentComment, selectFields, TRUNCATE_AT, truncate, nextSteps, nextStep,
 } from '../../src/cli/present.js';
 import { encode } from '../../src/cli/toon.js';
 
@@ -143,4 +143,91 @@ test('a --fields selection that drops id never produces an "undefined" reply tem
   const steps = nextSteps('wait', { comments: [{ body: 'x', quote: 'y' }] });
   assert.equal(steps.some((s) => s.includes('undefined')), false);
   for (const s of steps) assert.match(s, /^cr /);
+});
+
+test('nextStep: after open, do not reply yet and run cr wait', () => {
+  const step = nextStep('open', { key: 'abc' });
+  assert.match(String(step), /Do not reply to the human yet/);
+  assert.match(String(step), /`cr wait`/);
+});
+
+test('nextStep: wait with comments says to locate by quote, not line numbers, and not to stop', () => {
+  const step = nextStep('wait', { comments: [{ id: 1 }], closed: false });
+  assert.match(String(step), /quote, not its line numbers/);
+  assert.match(String(step), /`cr reply`/);
+  assert.match(String(step), /`cr refresh`/);
+  assert.match(String(step), /Do not stop to report to the human/);
+});
+
+test('nextStep: wait with no comments (a timeout) says to poll again, not that the review is over', () => {
+  const step = nextStep('wait', { empty: 'no comments (0 of 4)', closed: false });
+  assert.match(String(step), /`cr wait` again/);
+  assert.match(String(step), /Do not report to the human/);
+  assert.equal(/review being over/.test(String(step)), true);
+});
+
+test('nextStep: any payload with closed: true says stop polling and summarise, regardless of verb', () => {
+  const step = nextStep('wait', { comments: [], closed: true, closedBy: 'human' });
+  assert.match(String(step), /pressed Done/);
+  assert.match(String(step), /Stop polling/);
+  assert.match(String(step), /do not reopen/);
+});
+
+test('nextStep: reply with comments still unanswered says to reply to the rest, then refresh and wait', () => {
+  const step = nextStep('reply', { id: 1, status: 'fixed', counts: { total: 3, sent: 2, answered: 1 } });
+  assert.match(String(step), /remaining comments/);
+  assert.match(String(step), /`cr refresh`/);
+  assert.match(String(step), /`cr wait`/);
+});
+
+test('nextStep: reply with everything answered says to refresh then wait', () => {
+  const step = nextStep('reply', { id: 1, status: 'fixed', counts: { total: 1, answered: 1 } });
+  assert.match(String(step), /`cr refresh`/);
+  assert.match(String(step), /`cr wait`/);
+  assert.equal(/remaining comments/.test(String(step)), false);
+});
+
+test('nextStep: refresh says to run cr wait', () => {
+  assert.equal(nextStep('refresh', { key: 'abc' }), 'Run `cr wait`.');
+});
+
+test('nextStep: close says the session is over, summarise for the human', () => {
+  const step = nextStep('close', { key: 'abc', status: 'closed' });
+  assert.match(String(step), /session is over/);
+  assert.match(String(step), /Summarise/);
+});
+
+test('nextStep: bare cr showing a live session says to run cr wait', () => {
+  const step = nextStep('help', { repo: '/x', note: '', base: '', pr: '' });
+  assert.match(String(step), /already open/);
+  assert.match(String(step), /`cr wait`/);
+});
+
+test('nextStep: list says open comments are drafts the human has not sent, cr wait delivers work', () => {
+  const withComments = nextStep('list', { comments: [{ id: 1 }] });
+  const empty = nextStep('list', { empty: 'no comments (0 of 0)' });
+  for (const step of [withComments, empty]) {
+    assert.match(String(step), /drafts the human has not sent/);
+    assert.match(String(step), /`cr wait`/);
+  }
+});
+
+test('nextStep: error slugs get retryable, terminal or human-facing advice as appropriate', () => {
+  assert.match(String(nextStep('error', { error: { code: 'nothing-to-review', message: 'x' } })), /do not retry/);
+  assert.match(String(nextStep('error', { error: { code: 'agent-waiting', message: 'x' } })), /retryable/);
+  assert.match(String(nextStep('error', { error: { code: 'agent-waiting', message: 'x' } })), /`cr wait` again/);
+  assert.match(String(nextStep('error', { error: { code: 'session-closed', message: 'x' } })), /Do not reopen/);
+  assert.match(String(nextStep('error', { error: { code: 'server-unreachable', message: 'x' } })), /Retry once/);
+  assert.match(String(nextStep('error', { error: { code: 'usage', message: 'x' } })), /`cr <verb> --help`/);
+  assert.match(String(nextStep('error', { error: { code: 'invalid-input', message: 'x' } })), /`cr <verb> --help`/);
+});
+
+test('nextStep: a slug with no specific advice is omitted rather than vague', () => {
+  for (const code of ['state', 'bad-response', 'not-found', 'conflict', 'diff-too-large', 'server-error', 'error']) {
+    assert.equal(nextStep('error', { error: { code, message: 'x' } }), undefined);
+  }
+});
+
+test('nextStep: setup has no next_step, being outside the review loop', () => {
+  assert.equal(nextStep('setup', { path: '/x', status: 'installed' }), undefined);
 });
