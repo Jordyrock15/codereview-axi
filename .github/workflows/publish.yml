@@ -1,0 +1,43 @@
+name: publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Node 22 ships npm 10; trusted publishing needs 11.5.1 or newer.
+      - run: npm install -g npm@latest
+
+      # The tag reaches this through env, never interpolated into the script:
+      # a tag is attacker-shaped input and `run:` would execute it.
+      - name: check the release tag matches package.json
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          if [ "${TAG#v}" != "$version" ]; then
+            echo "tag $TAG does not match package.json $version" >&2
+            exit 1
+          fi
+
+      - run: npm run check
+
+      # prepublishOnly runs check again as a backstop. No token: the id-token
+      # permission above is what authenticates this publish.
+      - run: npm publish --provenance
