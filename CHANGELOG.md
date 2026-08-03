@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/Jordyrock15/codereview-axi/compare/v0.1.2...v0.1.3) (2026-08-03)
+
+
+### Bug Fixes
+
+* **ci:** install dependencies before running check ([#12](https://github.com/Jordyrock15/codereview-axi/issues/12)) ([0e93c3d](https://github.com/Jordyrock15/codereview-axi/commit/0e93c3d5a85c1bc645dd1413f24d3eda3d7820f6))
+
 ## [0.1.2](https://github.com/Jordyrock15/codereview-axi/compare/v0.1.1...v0.1.2) (2026-08-03)
 
 
