@@ -227,7 +227,7 @@ const openComposer = (file, afterRow) => {
   const box = el('div', 'thread composer');
   const from = Math.min(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
   const to = Math.max(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
-  box.append(el('div', 'who', `New comment · ${file.path} · ${from === to ? `line ${from}` : `lines ${from}-${to}`}`));
+  box.append(el('div', 'who', `Annotate ${file.path}:${from === to ? from : `${from}-${to}`}`));
 
   const text = document.createElement('textarea');
   text.placeholder = 'What is wrong, and what should change';
@@ -257,7 +257,7 @@ const openComposer = (file, afterRow) => {
   box.append(warn);
 
   const actions = el('div', 'actions');
-  const save = /** @type {HTMLButtonElement} */ (el('button', '', 'Save'));
+  const save = /** @type {HTMLButtonElement} */ (el('button', 'primary', 'Queue'));
   const cancel = el('button', '', 'Cancel');
 
   save.addEventListener('click', async () => {
@@ -298,7 +298,7 @@ const openComposer = (file, afterRow) => {
     if (!res.ok) {
       save.disabled = false;
       const problem = await res.json().catch(() => null);
-      warn.textContent = problem?.error ?? `Save failed (${res.status}).`;
+      warn.textContent = problem?.error ?? `Queue failed (${res.status}).`;
       return;
     }
     box.remove();
@@ -307,7 +307,7 @@ const openComposer = (file, afterRow) => {
   });
 
   cancel.addEventListener('click', () => { box.remove(); clearPick(); });
-  actions.append(save, cancel);
+  actions.append(cancel, save);
   box.append(actions);
 
   afterRow.after(box);
@@ -326,7 +326,7 @@ const updateComposerHeader = (box, file) => {
   const from = Math.min(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
   const to = Math.max(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
   const who = box.querySelector('.who');
-  if (who) who.textContent = `New comment · ${file.path} · ${from === to ? `line ${from}` : `lines ${from}-${to}`}`;
+  if (who) who.textContent = `Annotate ${file.path}:${from === to ? from : `${from}-${to}`}`;
 
   // A restart note from an earlier rejected shift-click must not linger past
   // the next successful pick, and this is the only path a successful

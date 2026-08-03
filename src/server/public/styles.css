@@ -215,7 +215,27 @@ main { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); mi
 .thread .warn { color: var(--del); font-size: 12px; margin-top: 6px; }
 .thread .warn:empty { display: none; }
 
-.thread.composer { box-shadow: var(--shadow-floating); }
+/* Floats above the diff rather than blending into them: its own ink ground,
+   no border, a strong shadow. Stays anchored under the picked line rather
+   than becoming a centred overlay, so the lines it comments on stay visible. */
+.thread.composer {
+  border: 0;
+  border-radius: var(--radius-xl);
+  background: var(--ink-800);
+  box-shadow: var(--shadow-floating);
+  padding: 14px;
+  /* A comment is a sentence or two, so a full-pane band is mostly empty. Cap it
+     so it reads as a dialog over the code rather than a stripe across it. */
+  max-width: 540px;
+}
+
+.thread.composer .who {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: normal;
+}
 
 .thread textarea {
   width: 100%;
@@ -229,10 +249,29 @@ main { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); mi
   resize: vertical;
 }
 
-.verdicts { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
-.verdicts button { border-radius: var(--radius-pill); }
+/* Sunk below the panel's own ink-800 ground: --paper is the darkest ink
+   step, so the border can drop out entirely without the field vanishing. */
+.thread.composer textarea {
+  background: var(--paper);
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  padding: 10px 12px;
+}
+
+.verdicts {
+  display: inline-flex;
+  gap: 2px;
+  margin-top: 10px;
+  padding: 2px;
+  background: var(--paper);
+  border-radius: var(--radius-pill);
+}
+.verdicts button { border: 0; border-radius: var(--radius-pill); padding: 4px 10px; }
 .verdicts button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-.thread .actions { display: flex; gap: 6px; margin-top: 8px; }
+.thread .actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.thread.composer .actions { justify-content: flex-end; }
+.thread.composer .actions .primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.thread.composer .actions .primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
 #stream[data-state="down"] { color: var(--del); }
 
 .tok-comment { color: var(--mid); font-style: italic; }
