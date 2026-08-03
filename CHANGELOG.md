@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.4](https://github.com/Jordyrock15/codereview-axi/compare/v0.1.3...v0.1.4) (2026-08-03)
+
+
+### Bug Fixes
+
+* stop losing sent comments, free abandoned leases, stop the daemon ([#14](https://github.com/Jordyrock15/codereview-axi/issues/14)) ([7500a04](https://github.com/Jordyrock15/codereview-axi/commit/7500a0473c4828ea21676dc66be52dc44a6158e3))
+
 ## [0.1.3](https://github.com/Jordyrock15/codereview-axi/compare/v0.1.2...v0.1.3) (2026-08-03)
 
 
