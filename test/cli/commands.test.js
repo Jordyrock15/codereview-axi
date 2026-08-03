@@ -403,14 +403,14 @@ test('reply next_step keys on the fix verdict, not on any outstanding reply', as
   // refresh must not be mentioned.
   const repliedExplainFirst = JSON.parse((await cr(['reply', '--id', '2', '--status', 'explained', '--body', 'because the id is opaque', '--json'])).out);
   assert.equal(repliedExplainFirst.fix.outstanding, 1);
-  assert.equal(repliedExplainFirst.fix.answered, 0);
+  assert.equal(repliedExplainFirst.fix.justFixed, false, 'this reply answered an explain, so no code changed');
   assert.equal(repliedExplainFirst.next_step, 'Reply to the remaining comments with verdict fix.');
 
   // The fix is now answered and nothing else with verdict fix is outstanding:
   // refresh is worth running.
   const repliedFixSecond = JSON.parse((await cr(['reply', '--id', '1', '--status', 'fixed', '--body', 'distributed the remainder', '--json'])).out);
   assert.equal(repliedFixSecond.fix.outstanding, 0);
-  assert.equal(repliedFixSecond.fix.answered, 1);
+  assert.equal(repliedFixSecond.fix.justFixed, true, 'this reply answered a fix, so the tab has something new to show');
   assert.equal(repliedFixSecond.next_step, 'Run `cr refresh` so the human sees the fixes, then run `cr wait`.');
 });
 
@@ -433,7 +433,7 @@ test('reply next_step on a pure-explain batch skips refresh entirely, since no c
 
   const replied = JSON.parse((await cr(['reply', '--id', '1', '--status', 'explained', '--body', 'it converts pence to pounds', '--json'])).out);
   assert.equal(replied.fix.outstanding, 0);
-  assert.equal(replied.fix.answered, 0);
+  assert.equal(replied.fix.justFixed, false);
   assert.equal(replied.next_step, 'Run `cr wait`.');
 });
 

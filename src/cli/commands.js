@@ -273,7 +273,7 @@ const HANDLERS = {
       id: comment.id,
       status: comment.status,
       counts: commentCounts(session.comments),
-      fix: fixCounts(session.comments),
+      fix: fixCounts(session.comments, comment),
     };
   },
 
@@ -337,21 +337,23 @@ const commentCounts = (comments) => {
 };
 
 /**
- * How many verdict-`fix` comments still await a reply, and how many have
- * ever been answered in this session. `nextStep` uses this, not `counts`,
- * to decide whether refresh is worth telling the agent to run: `counts` is
- * keyed by status across every verdict, and an all-`explain` batch would
- * otherwise still trigger a refresh that reports `relocated: []` for nothing.
- * @param {{verdict: string, status: string, replies: {role: string}[]}[]} comments
- * @returns {{outstanding: number, answered: number}}
+ * How many verdict-`fix` comments still await a reply, and whether the reply
+ * just made was to one. `nextStep` uses this, not `counts`, to decide whether
+ * refresh is worth running: `counts` is keyed by status across every verdict,
+ * so an all-`explain` batch would otherwise trigger a refresh that reports
+ * `relocated: []` for nothing.
+ * `replied` is the comment this reply answered.
+ * @param {{verdict: string, status: string}[]} comments
+ * @param {{verdict?: string}} [replied]
+ * @returns {{outstanding: number, justFixed: boolean}}
  */
-const fixCounts = (comments) => {
-  const fixes = comments.filter((c) => c.verdict === 'fix');
-  return {
-    outstanding: fixes.filter((c) => c.status === 'sent').length,
-    answered: fixes.filter((c) => c.replies.some((r) => r.role === 'agent')).length,
-  };
-};
+const fixCounts = (comments, replied) => ({
+  outstanding: comments.filter((c) => c.verdict === 'fix' && c.status === 'sent').length,
+  // Whether *this* reply touched code, not whether any fix was ever answered in
+  // the session: a cumulative count made every later explain-only batch claim a
+  // refresh was owed, which is the no-op this rule exists to avoid.
+  justFixed: replied?.verdict === 'fix',
+});
 
 /**
  * Joins `files[].tags` into a space-separated string for `open`, `refresh`

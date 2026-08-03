@@ -219,18 +219,20 @@ test('nextStep: reply with a fix comment still outstanding says to reply to the 
   assert.equal(/`cr refresh`/.test(String(step)), false, 'refresh is premature while fixes are still owed');
 });
 
-test('nextStep: reply with no fix outstanding, but a fix answered this session, says to refresh then wait', () => {
-  const step = nextStep('reply', { id: 1, status: 'fixed', fix: { outstanding: 0, answered: 1 } });
+test('nextStep: reply to a fix with none outstanding says to refresh then wait', () => {
+  const step = nextStep('reply', { id: 1, status: 'fixed', fix: { outstanding: 0, justFixed: true } });
   assert.match(String(step), /`cr refresh`/);
   assert.match(String(step), /`cr wait`/);
   assert.equal(/remaining comments/.test(String(step)), false);
 });
 
-test('nextStep: reply on a mixed batch, the last reply an explain but a fix answered earlier, still says refresh', () => {
-  // The last reply in this call is explain, which alone would suggest nothing
-  // to refresh, but an earlier fix in the same session makes refresh worth it.
-  const step = nextStep('reply', { id: 2, status: 'explained', fix: { outstanding: 0, answered: 1 } });
-  assert.match(String(step), /`cr refresh`/);
+test('nextStep: replying to an explain does not ask for a refresh, even after a fix earlier in the session', () => {
+  // The signal is what this reply touched, not what the session has ever done:
+  // a cumulative count made every later explain-only reply claim a refresh was
+  // owed, which is precisely the no-op this rule exists to avoid.
+  const step = nextStep('reply', { id: 2, status: 'explained', fix: { outstanding: 0, justFixed: false } });
+  assert.equal(/`cr refresh`/.test(String(step)), false);
+  assert.match(String(step), /`cr wait`/);
 });
 
 test('nextStep: reply on a pure-explain batch, no fix comments involved at all, skips refresh entirely', () => {
