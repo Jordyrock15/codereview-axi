@@ -23,6 +23,9 @@ jobs:
       # Node 22 ships npm 10; trusted publishing needs 11.5.1 or newer.
       - run: npm install -g npm@latest
 
+      # tsc and @types/node are devDependencies: check cannot run without them.
+      - run: npm ci
+
       # The tag reaches this through env, never interpolated into the script:
       # a tag is attacker-shaped input and `run:` would execute it.
       - name: check the release tag matches package.json
