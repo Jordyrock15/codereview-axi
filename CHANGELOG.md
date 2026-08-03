@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5](https://github.com/Jordyrock15/codereview-axi/compare/v0.1.4...v0.1.5) (2026-08-03)
+
+
+### Bug Fixes
+
+* close three delivery races and group answered comments ([#16](https://github.com/Jordyrock15/codereview-axi/issues/16)) ([c70ee64](https://github.com/Jordyrock15/codereview-axi/commit/c70ee646e0ff986bcbf89d098d227f3d81f9b6b1))
+
 ## [0.1.4](https://github.com/Jordyrock15/codereview-axi/compare/v0.1.3...v0.1.4) (2026-08-03)
 
 
