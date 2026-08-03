@@ -2,6 +2,12 @@
 
 Reviewing an agent-written diff in a terminal loses the anchor between a comment and the code it is about: line numbers scroll past, context is gone by the time a reply arrives. `cr` opens a browser review session over a git diff instead: the working diff by default, or a branch against its base, or a pull request. A human reads the actual diff, highlights lines, and leaves a comment with intent (fix, explain, ignore); those comments feed straight back to the coding agent as TOON (or JSON under `--json`), and the agent replies and refreshes the diff in place.
 
+![A cr review session: the payout splitter's diff, a human's question about negative takings, and the agent's answer threaded underneath it](https://raw.githubusercontent.com/Jordyrock15/codereview-axi/main/media/session.png)
+
+## Requirements
+
+Node 20 or newer, and `git` on `PATH`. No runtime dependencies and no build step. `gh` is needed only for `--pr`.
+
 ## Install
 
 Run it without installing:
@@ -26,6 +32,28 @@ cr reply --id 1 --status fixed --body "rounded to the nearest penny before the s
 cr refresh
 cr close
 ```
+
+## Using the review tab
+
+The browser tab is where you do the reviewing; everything else is the agent's side of the loop.
+
+- **Click a line number** in the gutter to comment on that line. **Shift-click** another line in the same hunk to select a range. Crossing into a different hunk starts a fresh selection instead of extending, because the unchanged lines between two hunks are not in the diff and a comment spanning them would not match the file.
+- **Pick an intent**: `fix` asks the agent to change the code, `explain` asks it to justify the code and change nothing, `ignore` acknowledges and drops it.
+- **Queue** saves the comment as a draft. Nothing reaches the agent yet.
+- **Queued n** in the header lists everything drafted, so you can read the batch back and remove anything before committing to it.
+- **Send** hands the whole batch over. The header then reads `waiting for agent` until it collects them, and `agent has it` while it works.
+- Answers arrive **threaded under your comment**, and the diff refreshes in place once the agent has made its changes. **Reply** adds a follow-up to the same thread; **Resolve** closes it.
+- **Done** ends the session and tells the agent to stop.
+
+A comment is anchored to the **text** you selected, not to a line number, so it follows the code as the agent edits around it. If the quoted text disappears entirely the comment is marked `stale` rather than silently pointing at the wrong line.
+
+## Driving it from an agent
+
+You only need to say this once, at the start:
+
+> Run `cr open`, then loop: `cr wait`, fix or answer what comes back, `cr reply` to each, and go again. Stop when the output says `closed: true`.
+
+After that it is hands-off. `cr wait` blocks silently until you press Send, and every payload ends with a `next_step` telling the agent what to do next, so it keeps going without you prompting it between rounds. `cr setup` goes one better and makes a fresh agent session start already knowing a review is waiting.
 
 `open` starts the session and opens a tab. `wait` blocks until the human sends comments or the session closes. Each comment gets a `cr reply`; once every comment with verdict `fix` has one, `cr refresh` pushes the updated diff into the open tab. A batch with no `fix` comments in it skips refresh entirely, since an `explain` or `ignore` reply changes no code. `cr close` ends the session when the agent is done.
 
@@ -117,7 +145,7 @@ If the server dies mid-`wait`, `cr wait` exits 1 with the `server-unreachable` s
 
 `body` and `quote` truncate past 2000 characters, with a hint naming the field and the total, because a human can quote a 1500-line selection and hand it straight back. `--full` on `wait` or `list` disables this.
 
-`cr reply` prints a minimal confirmation instead: `id`, `status`, `counts` (the same tally `close` prints, `total` plus one entry per comment status present) and `fix` (`outstanding`: verdict-`fix` comments still awaiting a reply; `answered`: verdict-`fix` comments answered so far this session). The agent already knows the body it sent, so nothing else comes back. `next_step` uses `fix` rather than `counts` to decide whether refresh is worth mentioning: while `fix.outstanding` is above zero it says to keep replying; once it drops to zero, `fix.answered` above zero says to refresh, and zero says to skip straight to `cr wait`.
+`cr reply` prints a minimal confirmation instead: `id`, `status`, `counts` (the same tally `close` prints, `total` plus one entry per comment status present) and `fix` (`outstanding`: verdict-`fix` comments still awaiting a reply; `justFixed`: whether this particular reply answered a verdict-`fix` comment). The agent already knows the body it sent, so nothing else comes back. `next_step` uses `fix` rather than `counts` to decide whether refresh is worth mentioning: while `fix.outstanding` is above zero it says to keep replying; once it drops to zero, `justFixed` says to refresh, and a reply that answered an `explain` says to skip straight to `cr wait`. It keys on the reply just made rather than a running total, so an explain-only reply never claims a refresh is owed just because some earlier fix was answered.
 
 ## Security
 
