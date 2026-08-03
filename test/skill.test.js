@@ -31,15 +31,23 @@ test('the skill takes an explicit request', () => {
   assert.ok(skill.includes('$ARGUMENTS'), 'slash-command invocations pass the request as $ARGUMENTS');
 });
 
-test('the skill delegates the loop rather than restating it', () => {
+test('the skill spells the loop out as well as pointing at next_step', () => {
   assert.ok(skill.includes('next_step'), 'the skill must point the agent at next_step');
-  // A second copy of the loop is a second source of truth, and it is the copy
-  // that goes stale: the output ships with the code, the skill file does not.
-  assert.doesNotMatch(
-    skill,
-    /cr wait[\s\S]{0,80}cr reply[\s\S]{0,80}cr refresh/,
-    'do not spell the wait/reply/refresh loop out here; next_step owns it',
-  );
+  // Delegating the loop entirely to next_step was tried and did not hold: an
+  // agent treats payload text as data and drops the poll. State it in both
+  // places, as lavish-axi does.
+  for (const verb of ['cr open', 'cr wait', 'cr reply', 'cr refresh']) {
+    assert.ok(skill.includes(verb), `the workflow must name ${verb}`);
+  }
+});
+
+test('the skill forbids backgrounding the poll', () => {
+  // A wait behind `&` returns comments to a process nobody is listening to,
+  // which reads to the human as an agent that silently stopped caring.
+  for (const trap of ['nohup', 'disown', 'foreground']) {
+    assert.ok(skill.includes(trap), `the poll rules must address ${trap}`);
+  }
+  assert.match(skill, /never kill it/i, 'the skill must say not to kill the wait');
 });
 
 test('every cr flag the skill names is a real flag', () => {

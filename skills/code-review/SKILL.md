@@ -37,16 +37,26 @@ Add `--note "<what you changed>"` so the tab header says what this review is abo
 
 `--pr` resolves the base and head through `gh` and **refuses rather than checking out** if the local branch is not the PR's head. Relay the command it prints; do not run it yourself unless asked. `cr` never writes to the repository under review.
 
-## Then follow the output, not this file
+## Workflow
 
-**Every payload ends with a `next_step`: one imperative instruction telling you what to do next. Follow it.** That is the loop, and it is deliberately not duplicated here so the two can never disagree.
+1. Open the session with `cr open` (see above). It prints the URL and opens a tab.
+2. Run `cr wait` to long-poll for the human's comments. Add `--say "<what to look at first>"` on the first wait so the tab opens with context.
+   `cr wait` stays silent until the human presses Send or ends the session, so **leave it running and never kill it.** That silence is the normal state, not a hang, and not a reason to give up on the poll or to go and report to the human.
+   Keep the wait in the **foreground** by default and let it return the comments straight to you. A background wait is acceptable only through a harness-native tracked background-job facility whose completion is guaranteed to resume or notify the same agent. Never use `nohup`, a shell `&`, `disown`, a redirected fire-and-forget process, or a detached terminal merely to keep the poll alive: the comments come back to a process nobody is listening to, and the human waits forever on an agent that has moved on. If your harness has no completion-aware background facility, use the foreground wait. Do not tell the human the review is being watched until that path is live.
+   If the wait is killed or times out anyway, just run it again. Sent comments stay queued and are never lost.
+3. Act on each comment by its verdict: `fix` edits the code, `explain` writes a justification and changes nothing, `ignore` is acknowledged and dropped.
+4. Run one `cr reply` per comment, with a status reflecting what you actually did.
+5. Once every `fix`-verdict comment has a reply, run `cr refresh` to push the new diff into the open tab. Skip it when the batch contained no `fix`, since an `explain` or `ignore` reply changed no code.
+6. Go back to step 2 without stopping to report. The human is in the tab, not in the chat, and a summary between rounds is a round they spend waiting.
+7. When a payload carries `closed: true`, the review is over. Summarise for the human, and do not reopen the session uninvited.
 
-The only thing worth stating up front, because getting it wrong is silent and costly:
+**Every payload also ends with a `next_step`: one imperative instruction for what to do right now.** It knows the session's actual state, so where it and this file disagree, follow it.
+
+Three mistakes here fail silently, which is why they are worth stating outright:
 
 - **Locate code by a comment's `quote`, never by its line numbers.** Comments re-anchor to quoted source text as the code moves, so the quote is authoritative and the numbers may already be stale from your own edits. If a quote appears more than once in the file, match the whole quoted block rather than a fragment of it.
-- **Honour the verdict.** `fix` means change the code. `explain` means answer and change nothing. `ignore` means acknowledge and move on. Do not fix something the human asked you to explain.
-- **Reply to every comment**, one `cr reply` each, with a status reflecting what you actually did. An unanswered comment leaves the human waiting with no sign of it.
-- **Do not stop to report between rounds** unless `next_step` says to. `cr wait` blocks silently until the human presses Send; that silence is normal and is not a reason to give up on the poll.
+- **Honour the verdict.** Do not fix something the human asked you to explain.
+- **Reply to every comment.** An unanswered comment leaves the human waiting with no sign of it.
 
 ## Reading an error
 
