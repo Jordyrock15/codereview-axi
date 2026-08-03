@@ -151,21 +151,27 @@ const counts = () => {
  */
 let panelGroup = null;
 
-/** @type {Record<keyof typeof GROUPS, {toggle: string, title: string, empty: string}>} */
+/** @type {Record<keyof typeof GROUPS, {toggle: string, title: string, region: string, close: string, empty: string}>} */
 const PANELS = {
   queued: {
     toggle: 'queue-open',
     title: 'Queue',
+    region: 'Queued comments',
+    close: 'Close queue',
     empty: 'Nothing queued. Draft a comment on the diff and it will show up here before you send it.',
   },
   answered: {
     toggle: 'answered-open',
     title: 'Answered',
+    region: 'Answered comments',
+    close: 'Close answered comments',
     empty: 'Nothing answered yet. Comments the agent has replied to collect here.',
   },
   resolved: {
     toggle: 'resolved-open',
     title: 'Resolved',
+    region: 'Resolved comments',
+    close: 'Close resolved comments',
     empty: 'Nothing resolved yet. Threads you close with Resolve collect here.',
   },
 };
@@ -235,6 +241,13 @@ const renderQueuePanel = () => {
   const group = panelGroup ?? 'queued';
   const config = PANELS[group];
   $('queue-title').textContent = config.title;
+
+  // One panel serves three groups, so the region and its close button have to be
+  // relabelled with it: left static, a screen reader announced "Queued comments"
+  // while the answered list was on screen. Named per group rather than made
+  // generic, so what is announced matches what is shown.
+  $('queue-panel').setAttribute('aria-label', config.region);
+  $('queue-close').setAttribute('aria-label', config.close);
 
   const entries = view.session ? groupEntries(view.session, GROUPS[group]) : [];
   if (entries.length === 0) {

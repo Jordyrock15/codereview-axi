@@ -529,7 +529,11 @@ export const createApp = ({
           // the same pid could both read the same comments, both build a payload,
           // and both return them while only one stamp landed: at-most-once
           // delivery would quietly have become at-least-once.
-          return deliverLock(ctx.params.key, async () => {
+          // Awaited, not returned bare: a bare `return promise` inside try/finally runs
+          // the finally at the return statement, which would release the lease while
+          // this poll was still building and stamping its payload, letting another
+          // agent in mid-delivery.
+          return await deliverLock(ctx.params.key, async () => {
             const { live, sent } = await peek();
 
             const withContext = await Promise.all(sent.map(async (comment) => ({
