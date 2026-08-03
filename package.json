@@ -3,18 +3,43 @@
   "version": "0.1.0",
   "description": "Local browser review session over a git diff, the working diff, a branch's base, or a pull request, annotations fed back to your coding agent",
   "type": "module",
-  "bin": { "cr": "bin/cr.js" },
-  "engines": { "node": ">=20" },
-  "files": ["bin", "src", "README.md", "LICENSE"],
+  "bin": {
+    "codereview-axi": "bin/cr.js",
+    "cr": "bin/cr.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "test": "node --test",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "prepublishOnly": "npm run check"
   },
   "license": "MIT",
-  "repository": { "type": "git", "url": "git+https://github.com/Jordyrock15/codereview-axi.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Jordyrock15/codereview-axi.git"
+  },
   "homepage": "https://github.com/Jordyrock15/codereview-axi#readme",
-  "bugs": { "url": "https://github.com/Jordyrock15/codereview-axi/issues" },
-  "keywords": ["code-review", "git", "diff", "agent", "cli"],
-  "devDependencies": { "typescript": "^5.6.0", "@types/node": "^20.0.0" }
+  "bugs": {
+    "url": "https://github.com/Jordyrock15/codereview-axi/issues"
+  },
+  "keywords": [
+    "code-review",
+    "git",
+    "diff",
+    "agent",
+    "cli"
+  ],
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^20.0.0"
+  }
 }

@@ -8,9 +8,17 @@
 
 import { renderLine } from './highlight.js';
 import { pairLines } from './pair.js';
+import { activityState } from './activity.js';
 
 const key = document.body.dataset.key;
 const token = new URLSearchParams(location.search).get('t') ?? '';
+
+/**
+ * Shared by the composer's save-path guard and a shift-click that fails the
+ * same-hunk or same-side test: both reject for the same reason, so they show
+ * the same words.
+ */
+const HUNK_BOUNDARY_MSG = 'Selection crosses a hunk boundary. Pick a single unbroken range and try again.';
 
 /**
  * @param {string} id
@@ -117,6 +125,30 @@ const counts = () => {
   const send = /** @type {HTMLButtonElement} */ ($('send'));
   send.disabled = unsent === 0;
   send.textContent = unsent === 0 ? 'Send' : `Send ${unsent}`;
+};
+
+/**
+ * `delivery` and `polling` are independent, not ranked: a lease can be held
+ * during any delivery state, most usefully during `waiting`, so this maps
+ * the pair to one label rather than picking a single "most urgent" state.
+ * @returns {void}
+ */
+const renderActivity = () => {
+  const node = $('activity');
+  if (!view.session) { node.replaceChildren(); return; }
+
+  const state = activityState(view.session);
+  node.dataset.delivery = state.delivery;
+  node.dataset.polling = String(state.polling);
+
+  const label = state.delivery === 'waiting'
+    ? (state.polling ? 'agent connecting' : 'waiting for agent')
+    : state.delivery === 'working'
+      ? (state.polling ? 'agent working' : 'agent has it')
+      : (state.polling ? 'agent connected' : '');
+
+  node.replaceChildren();
+  if (label) node.append(el('span', 'dot'), el('span', 'label', label));
 };
 
 /** @returns {void} */
@@ -243,8 +275,12 @@ const openComposer = (file, afterRow) => {
       warn.textContent = 'No lines are selected. Pick a range and try again.';
       return;
     }
+    // Unreachable today: pickHandler refuses to extend a selection across a
+    // hunk or side boundary, so quoteFromRows never sees a broken range here.
+    // Kept as defence in depth against a future caller that builds a quote
+    // without going through pickHandler's gating.
     if (!contiguous) {
-      warn.textContent = 'Selection crosses a hunk boundary. Pick a single unbroken range and try again.';
+      warn.textContent = HUNK_BOUNDARY_MSG;
       return;
     }
 
@@ -290,6 +326,12 @@ const updateComposerHeader = (box, file) => {
   const to = Math.max(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
   const who = box.querySelector('.who');
   if (who) who.textContent = `New comment · ${file.path} · ${from === to ? `line ${from}` : `lines ${from}-${to}`}`;
+
+  // A restart note from an earlier rejected shift-click must not linger past
+  // the next successful pick, and this is the only path a successful
+  // shift-extend takes: it does not recreate the composer's warn div.
+  const warn = box.querySelector('.warn');
+  if (warn) warn.textContent = '';
 };
 
 /**
@@ -391,8 +433,13 @@ const pickHandler = (file, row, side, lineNo) => (event) => {
   // The hunk must match as well: crossing into another hunk starts a fresh
   // selection rather than silently splicing out the unchanged gap between them.
   const sameHunk = row.dataset.hunk === picking.hunk;
-  const shiftExtend = event.shiftKey && picking.start !== null
-    && picking.file === file.path && side === picking.side && sameHunk;
+  const sameSelection = picking.start !== null && picking.file === file.path;
+  const shiftExtend = event.shiftKey && sameSelection && side === picking.side && sameHunk;
+
+  // A shift-click only counts as a rejection if there was a selection to
+  // extend in the first place: a plain click, or the very first shift-click
+  // with nothing picked yet, is not a rejection and must stay silent.
+  const rejected = event.shiftKey && sameSelection && !shiftExtend;
 
   if (shiftExtend) {
     picking.end = line;
@@ -410,6 +457,10 @@ const pickHandler = (file, row, side, lineNo) => (event) => {
     updateComposerHeader(existingComposer, file);
   } else {
     openComposer(file, row);
+    if (rejected) {
+      const warn = document.querySelector('.thread.composer .warn');
+      if (warn) warn.textContent = HUNK_BOUNDARY_MSG;
+    }
   }
 };
 
@@ -636,6 +687,7 @@ const load = async () => {
   renderFiles();
   renderDiff();
   counts();
+  renderActivity();
 };
 
 /** @returns {Promise<void>} */

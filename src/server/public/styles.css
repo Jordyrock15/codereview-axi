@@ -76,6 +76,21 @@ body {
 #note { color: var(--mid); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #counts { color: var(--mid); white-space: nowrap; }
 
+#activity { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+#activity:empty { display: none; }
+#activity .dot { width: 8px; height: 8px; border-radius: var(--radius-pill); background: var(--mid); }
+#activity .label { color: var(--mid); }
+#activity[data-delivery="waiting"] .dot { background: var(--brass-500); }
+#activity[data-delivery="working"] .dot,
+#activity[data-polling="true"] .dot { background: var(--sage-300); }
+
+/* Only the two live states pulse: the agent working, or a lease held right
+   now. The blanket prefers-reduced-motion rule further down collapses this
+   to a single, static frame. */
+@keyframes cr-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+#activity[data-delivery="working"] .dot,
+#activity[data-polling="true"] .dot { animation: cr-pulse 1.6s var(--ease) infinite; }
+
 button {
   font: inherit;
   padding: 4px 12px;
