@@ -35,13 +35,26 @@ export const shellHtml = (key) => `<!doctype html>
 <body data-key="${escapeHtml(key)}" data-large="${LARGE_FILE_LINES}">
 <header id="bar">
   <span id="note"></span>
-  <span id="counts"></span>
+  <span id="counts">
+    <button id="queue-toggle" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="queue-panel">0 unsent</button>
+    <span id="counts-rest">· 0 answered · 0 stale</span>
+  </span>
   <span id="activity" data-delivery="idle"></span>
   <button id="view" title="Toggle side-by-side">split</button>
   <button id="send" disabled>Send</button>
   <button id="done">Done</button>
   <span id="stream" title="event stream">connecting</span>
 </header>
+<div id="queue-panel" role="region" aria-label="Queued comments" hidden>
+  <div class="queue-head">
+    <span>Queue</span>
+    <button id="queue-close" type="button" aria-label="Close queue">✕</button>
+  </div>
+  <div id="queue-list"></div>
+  <div class="queue-foot">
+    <button id="queue-send" type="button" disabled>Send</button>
+  </div>
+</div>
 <main>
   <nav id="files" aria-label="Changed files"></nav>
   <div id="diff-wrap">

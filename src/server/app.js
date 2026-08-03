@@ -337,6 +337,34 @@ export const createApp = ({
       },
     },
     {
+      // No route existed for this before; the closest prior art is /note and
+      // /view, which also mutate a session field directly here rather than
+      // through src/state/comments.js. Scoped to open/reopened only: once a
+      // comment is sent the agent may already be acting on it, and pulling it
+      // back here would silently desync the session from what it was told.
+      method: 'DELETE',
+      pattern: '/api/sessions/:key/comments/:id',
+      handler: async (ctx) => {
+        requireOpen(await guarded(ctx));
+        const id = Number(ctx.params.id);
+        if (!Number.isInteger(id)) throw new StateError(400, 'id must be an integer');
+
+        await mutateState((state) => {
+          const live = state.sessions[ctx.params.key];
+          const index = live.comments.findIndex((c) => c.id === id);
+          if (index === -1) throw new StateError(404, `no comment with id ${id}`);
+          if (!['open', 'reopened'].includes(live.comments[index].status)) {
+            throw new StateError(409, `comment ${id} is ${live.comments[index].status}, not queued`);
+          }
+          live.comments.splice(index, 1);
+          live.updatedAt = new Date(now()).toISOString();
+        });
+
+        hub.publish(ctx.params.key, 'comment', { id, removed: true });
+        return { body: { id, removed: true } };
+      },
+    },
+    {
       method: 'POST',
       pattern: '/api/sessions/:key/send',
       handler: async (ctx) => {

@@ -10,6 +10,7 @@ import { renderLine } from './highlight.js';
 import { pairLines } from './pair.js';
 import { activityState } from './activity.js';
 import { overlayVisible, remainingVisibleMs, OVERLAY_SHOW_DELAY_MS } from './overlay.js';
+import { queueEntries } from './queue.js';
 
 const key = document.body.dataset.key;
 const token = new URLSearchParams(location.search).get('t') ?? '';
@@ -122,10 +123,116 @@ const counts = () => {
   const answered = comments.filter((c) => c.status === 'answered').length;
   const stale = comments.filter((c) => c.status === 'stale').length;
 
-  $('counts').textContent = `${unsent} unsent · ${answered} answered · ${stale} stale`;
+  $('queue-toggle').textContent = `${unsent} unsent`;
+  $('counts-rest').textContent = `· ${answered} answered · ${stale} stale`;
   const send = /** @type {HTMLButtonElement} */ ($('send'));
   send.disabled = unsent === 0;
   send.textContent = unsent === 0 ? 'Send' : `Send ${unsent}`;
+  const queueSend = /** @type {HTMLButtonElement} */ ($('queue-send'));
+  queueSend.disabled = unsent === 0;
+  queueSend.textContent = unsent === 0 ? 'Send' : `Send ${unsent}`;
+};
+
+/** Whether the queue panel is currently open. Survives a re-render like `view.current` does. */
+let queueOpen = false;
+
+/** @returns {boolean} */
+const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/**
+ * @param {Event} event
+ * @returns {void}
+ */
+const onQueueOutsideClick = (event) => {
+  const panel = $('queue-panel');
+  const toggle = $('queue-toggle');
+  const target = /** @type {Node|null} */ (event.target);
+  if (target && (panel.contains(target) || toggle.contains(target))) return;
+  closeQueuePanel();
+};
+
+/**
+ * @param {import('./queue.js').QueueEntry} entry
+ * @returns {HTMLElement}
+ */
+const queueEntryEl = (entry) => {
+  const row = el('div', 'queue-entry');
+
+  const open = /** @type {HTMLButtonElement} */ (el('button', 'queue-entry-open'));
+  open.type = 'button';
+  open.append(
+    el('span', 'queue-entry-loc', entry.location),
+    el('span', 'queue-entry-verdict', entry.verdict),
+    el('span', 'queue-entry-body', entry.body),
+  );
+  open.addEventListener('click', () => { scrollToComment(entry.id); closeQueuePanel(); });
+
+  const remove = /** @type {HTMLButtonElement} */ (el('button', 'queue-entry-remove', 'Remove'));
+  remove.type = 'button';
+  remove.setAttribute('aria-label', `Remove the comment on ${entry.location || 'this note'} from the queue`);
+  remove.addEventListener('click', async (event) => {
+    event.stopPropagation();
+    remove.disabled = true;
+    await api(`/comments/${entry.id}`, { method: 'DELETE' });
+    await load();
+  });
+
+  row.append(open, remove);
+  return row;
+};
+
+/** @returns {void} */
+const renderQueuePanel = () => {
+  const panel = $('queue-panel');
+  const list = $('queue-list');
+  list.replaceChildren();
+
+  const entries = view.session ? queueEntries(view.session) : [];
+  if (entries.length === 0) {
+    list.append(el('p', 'queue-empty', 'Nothing queued. Draft a comment on the diff and it will show up here before you send it.'));
+  } else {
+    for (const entry of entries) list.append(queueEntryEl(entry));
+  }
+
+  panel.hidden = !queueOpen;
+  $('queue-toggle').setAttribute('aria-expanded', String(queueOpen));
+};
+
+/** @returns {void} */
+const openQueuePanel = () => {
+  queueOpen = true;
+  renderQueuePanel();
+  document.addEventListener('mousedown', onQueueOutsideClick);
+};
+
+/** @returns {void} */
+const closeQueuePanel = () => {
+  queueOpen = false;
+  renderQueuePanel();
+  document.removeEventListener('mousedown', onQueueOutsideClick);
+};
+
+/** @returns {void} */
+const toggleQueuePanel = () => { if (queueOpen) closeQueuePanel(); else openQueuePanel(); };
+
+/**
+ * Switches to the comment's file if needed (the same path the files-nav
+ * click handler takes) and scrolls its thread into view.
+ * @param {number} id
+ * @returns {void}
+ */
+const scrollToComment = (id) => {
+  const comment = view.session?.comments.find((c) => c.id === id);
+  if (!comment) return;
+
+  if (comment.file !== null && comment.file !== view.current) {
+    view.current = comment.file;
+    renderFiles();
+    renderDiff();
+  }
+
+  const target = document.querySelector(`[data-comment-id="${id}"]`);
+  target?.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'center' });
 };
 
 /**
@@ -341,6 +448,7 @@ const updateComposerHeader = (box, file) => {
  */
 const threadFor = (comment) => {
   const box = el('div', `thread ${comment.status}`);
+  box.dataset.commentId = String(comment.id);
 
   if (comment.status === 'answered' || comment.status === 'resolved') {
     box.append(el('span', '', `${comment.status === 'resolved' ? 'Resolved' : 'Answered'} · ${comment.agentReply?.status ?? ''}: ${comment.agentReply?.body ?? ''}`));
@@ -736,6 +844,7 @@ const load = async () => {
   renderDiff();
   counts();
   renderActivity();
+  renderQueuePanel();
 };
 
 /** @returns {Promise<void>} */
@@ -748,7 +857,16 @@ const toggleView = async () => {
 $('send').addEventListener('click', send);
 $('done').addEventListener('click', done);
 $('view').addEventListener('click', toggleView);
-document.addEventListener('keydown', (event) => { if (event.key === 'Escape') clearPick(); });
+$('queue-toggle').addEventListener('click', toggleQueuePanel);
+$('queue-close').addEventListener('click', closeQueuePanel);
+$('queue-send').addEventListener('click', async () => { await send(); closeQueuePanel(); });
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  // The panel takes priority: closing it must not also discard an unrelated
+  // in-progress composer, which clearPick() would do.
+  if (queueOpen) { closeQueuePanel(); return; }
+  clearPick();
+});
 
 subscribe();
 await withOverlay(load);

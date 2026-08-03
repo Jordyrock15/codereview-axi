@@ -214,6 +214,59 @@ test('a session-scope comment needs no quote', async (t) => {
   assert.equal(res.status, 201);
 });
 
+test('DELETE removes a queued comment and publishes it', async (t) => {
+  const { call, at, hub } = await setup(t);
+  await call('POST', at('/comments'), lineBody());
+
+  /** @type {string[]} */
+  const events = [];
+  hub.publish = (k, event) => { events.push(event); return 1; };
+
+  const res = await call('DELETE', at('/comments/1'));
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.json, { id: 1, removed: true });
+  assert.deepEqual(events, ['comment']);
+
+  const session = (await call('GET', at(''))).json;
+  assert.equal(session.comments.length, 0);
+});
+
+test('DELETE removes a reopened comment too', async (t) => {
+  const { call, at } = await setup(t);
+  await call('POST', at('/comments'), lineBody());
+  await call('POST', at('/send'));
+  await call('POST', at('/replies'), { id: 1, status: 'fixed', body: 'done' });
+  await call('PATCH', at('/comments/1'), { status: 'reopened' });
+
+  const res = await call('DELETE', at('/comments/1'));
+  assert.equal(res.status, 200);
+});
+
+test('DELETE refuses a sent, answered or resolved comment', async (t) => {
+  const { call, at } = await setup(t);
+  await call('POST', at('/comments'), lineBody());
+  await call('POST', at('/send'));
+  assert.equal((await call('DELETE', at('/comments/1'))).status, 409);
+
+  await call('POST', at('/replies'), { id: 1, status: 'fixed', body: 'done' });
+  assert.equal((await call('DELETE', at('/comments/1'))).status, 409);
+
+  await call('PATCH', at('/comments/1'), { status: 'resolved' });
+  assert.equal((await call('DELETE', at('/comments/1'))).status, 409);
+});
+
+test('DELETE 404s an unknown id', async (t) => {
+  const { call, at } = await setup(t);
+  assert.equal((await call('DELETE', at('/comments/9'))).status, 404);
+});
+
+test('DELETE refuses on a closed session', async (t) => {
+  const { call, at } = await setup(t);
+  await call('POST', at('/comments'), lineBody());
+  await call('POST', at('/close'), { closedBy: 'human' });
+  assert.equal((await call('DELETE', at('/comments/1'))).status, 409);
+});
+
 test('PATCH note replaces the note and publishes it', async (t) => {
   const { call, at, hub } = await setup(t);
   /** @type {string[]} */
