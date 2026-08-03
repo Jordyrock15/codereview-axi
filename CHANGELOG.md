@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.6](https://github.com/Jordyrock15/codereview-axi/compare/v0.1.5...v0.1.6) (2026-08-03)
+
+
+### Documentation
+
+* refresh the README and its screenshots ([#18](https://github.com/Jordyrock15/codereview-axi/issues/18)) ([#19](https://github.com/Jordyrock15/codereview-axi/issues/19)) ([0b5aff4](https://github.com/Jordyrock15/codereview-axi/commit/0b5aff41d01060b3d8ed41469a1056971fbe57fd))
+
 ## [0.1.5](https://github.com/Jordyrock15/codereview-axi/compare/v0.1.4...v0.1.5) (2026-08-03)
 
 
