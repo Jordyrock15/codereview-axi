@@ -49,6 +49,30 @@ The browser tab is where you do the reviewing; everything else is the agent's si
 
 A comment is anchored to the **text** you selected, not to a line number, so it follows the code as the agent edits around it. If the quoted text disappears entirely the comment is marked `stale` rather than silently pointing at the wrong line.
 
+## The skill
+
+The package ships a skill at `skills/code-review/SKILL.md`, in the [Agent Skills](https://agentskills.io) format. Install it with [`npx skills`](https://github.com/vercel-labs/skills):
+
+```sh
+npx skills add Jordyrock15/codereview-axi --skill code-review
+```
+
+By default it lands in the current project's `.claude/skills/`; add `-g` for `~/.claude/skills/` so it applies everywhere.
+
+Then ask for a review in your own words, and the agent loads the skill when it recognises the task:
+
+> review these changes with me
+
+Or invoke it directly in an agent that exposes skills as slash commands:
+
+```
+/code-review the payout splitter
+```
+
+**The skill only handles discovery.** It tells the agent that `cr` exists, how to start a session, and the few things that are silently costly to get wrong: locate code by a comment's `quote` rather than its line numbers, honour the verdict, reply to everything. The loop itself is not in the skill, because it is in the output; see below.
+
+The skill is the recommended path but not the only one. Without it, one sentence gets an agent going, and `cr setup` makes a fresh session notice a review on its own.
+
 ## Driving it from an agent
 
 You do not have to teach your agent the loop. Every payload ends with a `next_step`: one imperative instruction telling the agent what to do next. After `cr open` it says to run `cr wait` and not to kill it; after `wait` returns comments it says to answer each one and then refresh and wait again, without stopping to report back; once a payload carries `closed: true` it says to stop. The agent reads the loop out of the output as it goes.
@@ -190,7 +214,6 @@ Deferred to v2, absent by design, so nobody files them as bugs:
 - Bulk resolve.
 - Reopening an answered comment. Removed deliberately: it re-sent the same text, so the agent redid the same work. A follow-up on the thread carries new text instead, and queues as a draft so you still choose when to send it.
 - Markdown in comment bodies.
-- A Claude Code skill wrapper.
 - Posting review comments back to GitHub, or reading existing PR comments.
 - Any provider other than GitHub, or reviewing an arbitrary rev range beyond a base ref.
 
