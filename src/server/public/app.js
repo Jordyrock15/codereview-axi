@@ -14,6 +14,7 @@ import {
   OVERLAY_REFRESHED_SHOW_DELAY_MS, OVERLAY_REFRESHED_MIN_VISIBLE_MS,
 } from './overlay.js';
 import { queueEntries } from './queue.js';
+import { splitPathLabel } from './path-label.js';
 
 const key = document.body.dataset.key;
 const token = new URLSearchParams(location.search).get('t') ?? '';
@@ -272,8 +273,13 @@ const renderFiles = () => {
   for (const file of session.snapshot.files) {
     const open = session.comments.filter((c) => c.file === file.path && c.status !== 'resolved').length;
     const button = el('button', file.tags.includes('generated') ? 'gen' : '');
-    button.append(el('span', 'path', file.path));
+    const { dir, base } = splitPathLabel(file.path);
+    const label = el('span', 'path');
+    if (dir) label.append(el('span', 'dir', dir));
+    label.append(el('span', 'base', base));
+    button.append(label);
     button.append(el('span', 'count', open === 0 ? `+${file.added} -${file.removed}` : String(open)));
+    button.title = file.path;
     button.setAttribute('aria-current', String(file.path === view.current));
     button.addEventListener('click', () => { view.current = file.path; renderDiff(); renderFiles(); });
     nav.append(button);

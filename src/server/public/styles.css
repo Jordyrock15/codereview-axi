@@ -66,10 +66,7 @@ body {
   height: var(--bar-h);
   padding: 0 16px;
   border-bottom: 1px solid var(--hair);
-  position: sticky;
-  top: 0;
   background: var(--ink-700);
-  z-index: 2;
   box-sizing: border-box;
 }
 
@@ -111,7 +108,12 @@ button:active:not(:disabled) { opacity: 0.85; }
 #send:not(:disabled) { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 #send:not(:disabled):hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 
-main { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); min-height: calc(100vh - var(--bar-h)); }
+main {
+  display: grid;
+  grid-template-columns: minmax(0, 260px) minmax(0, 1fr);
+  height: calc(100vh - var(--bar-h));
+  overflow: hidden;
+}
 
 #files { border-right: 1px solid var(--hair); background: var(--paper-2); padding: 12px; overflow-y: auto; }
 
@@ -129,10 +131,18 @@ main { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); mi
 
 #files button[aria-current="true"] { background: var(--card); color: var(--ink); }
 #files .gen { opacity: 0.65; }
-#files .count { color: var(--accent); }
 
-#diff-wrap { position: relative; min-width: 0; }
-#diff { overflow-x: auto; }
+/* min-width: 0 so the path can shrink below its content size at all, the
+   usual flex-item trap; .dir alone ellipsises so the basename, what a human
+   is actually scanning for, never gets truncated with it. */
+#files .path { display: flex; min-width: 0; }
+#files .dir { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; opacity: 0.65; }
+#files .base { white-space: nowrap; flex-shrink: 0; }
+
+#files .count { color: var(--accent); flex-shrink: 0; white-space: nowrap; }
+
+#diff-wrap { position: relative; min-width: 0; height: 100%; overflow: hidden; }
+#diff { height: 100%; overflow: auto; }
 
 /* A translucent scrim, not a full-page block: the human keeps their bearings
    on the file list and header while the diff itself is being replaced. */
