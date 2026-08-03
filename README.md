@@ -1,5 +1,7 @@
 # codereview-axi
 
+[![npm](https://img.shields.io/npm/v/codereview-axi)](https://www.npmjs.com/package/codereview-axi)
+
 Reviewing an agent-written diff in a terminal loses the anchor between a comment and the code it is about: line numbers scroll past, context is gone by the time a reply arrives. `cr` opens a browser review session over a git diff instead: the working diff by default, or a branch against its base, or a pull request. A human reads the actual diff, highlights lines, and leaves a comment with intent (fix, explain, ignore); those comments feed straight back to the coding agent as TOON (or JSON under `--json`), and the agent replies and refreshes the diff in place.
 
 ![A cr review session: the payout splitter's diff, a human's question about negative takings, and the agent's answer threaded underneath it](https://raw.githubusercontent.com/Jordyrock15/codereview-axi/main/media/session.png)
@@ -49,11 +51,29 @@ A comment is anchored to the **text** you selected, not to a line number, so it 
 
 ## Driving it from an agent
 
-You only need to say this once, at the start:
+You do not have to teach your agent the loop. Every payload ends with a `next_step`: one imperative instruction telling the agent what to do next. After `cr open` it says to run `cr wait` and not to kill it; after `wait` returns comments it says to answer each one and then refresh and wait again, without stopping to report back; once a payload carries `closed: true` it says to stop. The agent reads the loop out of the output as it goes.
 
-> Run `cr open`, then loop: `cr wait`, fix or answer what comes back, `cr reply` to each, and go again. Stop when the output says `closed: true`.
+So all that is needed is the first command. Two ways to get there:
 
-After that it is hands-off. `cr wait` blocks silently until you press Send, and every payload ends with a `next_step` telling the agent what to do next, so it keeps going without you prompting it between rounds. `cr setup` goes one better and makes a fresh agent session start already knowing a review is waiting.
+**With the hook installed**, run `cr setup` once, then just start a review in your own terminal:
+
+```sh
+cr open --note "refactored the payout splitter"
+```
+
+Your next agent turn begins by seeing the live session and being told to collect it:
+
+```
+next_step: A review is already open. Run `cr wait` to pick up whatever is waiting.
+```
+
+From there it is hands-off. You annotate, press Send, and the fixes come back without you prompting between rounds.
+
+**Without the hook**, say it once, and keep it short:
+
+> There is a review open, pick it up with `cr`.
+
+Deliberately, a bare `cr` with no session open carries no `next_step`. It falls back to usage, because an agent should not start a review nobody asked for; opening one is the human's call.
 
 `open` starts the session and opens a tab. `wait` blocks until the human sends comments or the session closes. Each comment gets a `cr reply`; once every comment with verdict `fix` has one, `cr refresh` pushes the updated diff into the open tab. A batch with no `fix` comments in it skips refresh entirely, since an `explain` or `ignore` reply changes no code. `cr close` ends the session when the agent is done.
 
@@ -161,19 +181,20 @@ If the server dies mid-`wait`, `cr wait` exits 1 with the `server-unreachable` s
 
 Deferred to v2, absent by design, so nobody files them as bugs:
 
-- Keyboard navigation.
+- Keyboard navigation beyond focus rings and `Escape` closing the queue panel.
 - A separate history pane.
 - File-level comments in the UI.
 - Chat (the session's `chat` array stays in the shape so v2 can fill it without a migration).
 - `--exclude`.
 - Virtualised scrolling.
 - Bulk resolve.
+- Reopening an answered comment. Removed deliberately: it re-sent the same text, so the agent redid the same work. A follow-up on the thread carries new text instead, and queues as a draft so you still choose when to send it.
 - Markdown in comment bodies.
 - A Claude Code skill wrapper.
 - Posting review comments back to GitHub, or reading existing PR comments.
 - Any provider other than GitHub, or reviewing an arbitrary rev range beyond a base ref.
 
-The browser UI itself has no automated test coverage in v1; it rests on manual verification.
+Of the browser files, `activity.js`, `overlay.js`, `queue.js`, `pair.js` and `highlight.js` are covered by tests, because their logic was deliberately factored out to be testable. `app.js`, the DOM layer itself, has none: it rests on manual verification, and the interactive paths have been exercised by one person rather than proven.
 
 ## Development
 
