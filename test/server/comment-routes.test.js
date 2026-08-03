@@ -91,7 +91,16 @@ test('PATCH resolve is refused until the agent has replied, then allowed', async
   await call('POST', at('/replies'), { id: 1, status: 'fixed', body: 'done' });
 
   assert.equal((await call('PATCH', at('/comments/1'), { status: 'resolved' })).json.status, 'resolved');
-  assert.equal((await call('PATCH', at('/comments/1'), { status: 'reopened' })).json.status, 'reopened');
+});
+
+test('PATCH refuses any status other than resolved', async (t) => {
+  const { call, at } = await setup(t);
+  await call('POST', at('/comments'), lineBody());
+  await call('POST', at('/send'));
+  await call('POST', at('/replies'), { id: 1, status: 'fixed', body: 'done' });
+
+  const res = await call('PATCH', at('/comments/1'), { status: 'reopened' });
+  assert.equal(res.status, 400);
 });
 
 test('PATCH 404s an unknown id', async (t) => {
@@ -133,7 +142,56 @@ test('POST replies moves a sent comment to answered', async (t) => {
 
   const res = await call('POST', at('/replies'), { id: 1, status: 'fixed', body: 'remainder distributed' });
   assert.equal(res.json.status, 'answered');
-  assert.equal(res.json.agentReply.status, 'fixed');
+  assert.equal(res.json.replies.length, 1);
+  assert.equal(res.json.replies[0].role, 'agent');
+  assert.equal(res.json.replies[0].status, 'fixed');
+  assert.equal(res.json.replies[0].body, 'remainder distributed');
+});
+
+test('POST replies appends rather than overwrites across a follow-up round', async (t) => {
+  const { call, at } = await setup(t);
+  await call('POST', at('/comments'), lineBody());
+  await call('POST', at('/send'));
+  await call('POST', at('/replies'), { id: 1, status: 'fixed', body: 'first fix' });
+
+  await call('POST', at('/comments/1/followup'), { body: 'also check the edge case' });
+  await call('POST', at('/send'));
+  const res = await call('POST', at('/replies'), { id: 1, status: 'explained', body: 'edge case cannot occur' });
+
+  assert.equal(res.json.replies.length, 3);
+  assert.deepEqual(res.json.replies.map((/** @type {any} */ m) => m.role), ['agent', 'human', 'agent']);
+});
+
+test('POST followup requeues an answered comment and publishes it', async (t) => {
+  const { call, at, hub } = await setup(t);
+  await call('POST', at('/comments'), lineBody());
+  await call('POST', at('/send'));
+  await call('POST', at('/replies'), { id: 1, status: 'fixed', body: 'done' });
+
+  /** @type {string[]} */
+  const events = [];
+  hub.publish = (k, event) => { events.push(event); return 1; };
+
+  const res = await call('POST', at('/comments/1/followup'), { body: 'also check the negative case' });
+  assert.equal(res.status, 201);
+  assert.equal(res.json.status, 'open');
+  assert.deepEqual(events, ['comment']);
+});
+
+test('POST followup 409s a comment that has not been answered, and 404s an unknown id', async (t) => {
+  const { call, at } = await setup(t);
+  await call('POST', at('/comments'), lineBody());
+  assert.equal((await call('POST', at('/comments/1/followup'), { body: 'x' })).status, 409);
+  assert.equal((await call('POST', at('/comments/9/followup'), { body: 'x' })).status, 404);
+});
+
+test('POST followup rejects an empty body', async (t) => {
+  const { call, at } = await setup(t);
+  await call('POST', at('/comments'), lineBody());
+  await call('POST', at('/send'));
+  await call('POST', at('/replies'), { id: 1, status: 'fixed', body: 'done' });
+
+  assert.equal((await call('POST', at('/comments/1/followup'), { body: '   ' })).status, 400);
 });
 
 test('POST replies 409s an unsent comment and 404s an unknown id', async (t) => {
@@ -231,15 +289,25 @@ test('DELETE removes a queued comment and publishes it', async (t) => {
   assert.equal(session.comments.length, 0);
 });
 
-test('DELETE removes a reopened comment too', async (t) => {
-  const { call, at } = await setup(t);
+test('DELETE on a comment re-queued by a follow-up cancels the draft, not the whole thread', async (t) => {
+  const { call, at, hub } = await setup(t);
   await call('POST', at('/comments'), lineBody());
   await call('POST', at('/send'));
   await call('POST', at('/replies'), { id: 1, status: 'fixed', body: 'done' });
-  await call('PATCH', at('/comments/1'), { status: 'reopened' });
+  await call('POST', at('/comments/1/followup'), { body: 'one more thing' });
+
+  /** @type {string[]} */
+  const events = [];
+  hub.publish = (k, event) => { events.push(event); return 1; };
 
   const res = await call('DELETE', at('/comments/1'));
   assert.equal(res.status, 200);
+  assert.equal(res.json.status, 'answered');
+  assert.deepEqual(events, ['comment']);
+
+  const session = (await call('GET', at(''))).json;
+  assert.equal(session.comments.length, 1, 'the answered exchange must survive cancelling the draft follow-up');
+  assert.equal(session.comments[0].replies.length, 1);
 });
 
 test('DELETE refuses a sent, answered or resolved comment', async (t) => {

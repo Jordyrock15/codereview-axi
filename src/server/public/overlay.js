@@ -7,6 +7,15 @@ export const OVERLAY_SHOW_DELAY_MS = 150;
 export const OVERLAY_MIN_VISIBLE_MS = 200;
 
 /**
+ * Timing for the `refreshed` cause: the agent changed the code, so the
+ * overlay is change feedback, not a slow-work spinner, and must always be
+ * seen. No show-delay, and a longer minimum so it reads as a deliberate
+ * signal rather than a flicker.
+ */
+export const OVERLAY_REFRESHED_SHOW_DELAY_MS = 0;
+export const OVERLAY_REFRESHED_MIN_VISIBLE_MS = 300;
+
+/**
  * Whether the overlay is still worth revealing once the show-delay timer
  * fires: not if the work it is covering already finished in the meantime.
  * @param {{elapsedMs: number, finished: boolean, showDelayMs?: number}} args

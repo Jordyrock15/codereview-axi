@@ -10,13 +10,13 @@ export const DEFAULT_COMMENT_FIELDS = ['id', 'file', 'lines', 'verdict', 'body',
  */
 export const AGENT_COMMENT_FIELDS = [
   'id', 'scope', 'file', 'lines', 'quote', 'body', 'verdict', 'status',
-  'agentReply', 'createdAt', 'updatedAt',
+  'replies', 'createdAt', 'updatedAt',
 ];
 
 /** The limit below is in characters (code points), not UTF-16 code units: an emoji is one character but two units. */
 export const TRUNCATE_AT = 2000;
 
-const TRUNCATED = new Set(['body', 'quote']);
+const TRUNCATED = new Set(['body', 'quote', 'replies']);
 
 /**
  * @param {string} value
@@ -44,9 +44,39 @@ const lines = (/** @type {any} */ c) => {
   return c.side === null || c.side === undefined ? range : `${c.side}:${range}`;
 };
 
-const reply = (/** @type {any} */ c) => (
-  c.agentReply === null || c.agentReply === undefined ? '' : `${c.agentReply.status}: ${c.agentReply.body}`
-);
+/**
+ * `body` is meant for an agent that mostly wants the latest human message:
+ * the opening comment, unless a follow-up has been added since, in which case
+ * that follow-up. Naming this the same key as the raw field is deliberate,
+ * not a collision: it keeps the four defaults an agent already knows about
+ * doing something more useful now, rather than growing a fifth field nobody
+ * asks for by default.
+ * @param {any} c
+ * @returns {string}
+ */
+const latestHumanBody = (c) => {
+  const replies = Array.isArray(c.replies) ? c.replies : [];
+  for (let i = replies.length - 1; i >= 0; i -= 1) {
+    if (replies[i].role === 'human') return replies[i].body;
+  }
+  return c.body ?? '';
+};
+
+/**
+ * The full thread, opening message first, flattened to one string: everything
+ * an agent needs to see what it already answered, without the tabular
+ * encoder ever meeting a nested array.
+ * @param {any} c
+ * @returns {string}
+ */
+const thread = (/** @type {any} */ c) => {
+  const replies = Array.isArray(c.replies) ? c.replies : [];
+  const opening = `human: ${c.body ?? ''}`;
+  const rest = replies.map((/** @type {any} */ m) => (
+    m.role === 'agent' ? `agent(${m.status}): ${m.body}` : `human: ${m.body}`
+  ));
+  return [opening, ...rest].join(' | ');
+};
 
 /**
  * @param {Record<string, unknown>} comment
@@ -59,7 +89,8 @@ export const presentComment = (comment, fields, { limit = TRUNCATE_AT } = {}) =>
   const out = {};
   for (const f of fields) {
     if (f === 'lines') out.lines = lines(comment);
-    else if (f === 'agentReply') out.agentReply = reply(comment);
+    else if (f === 'replies') out.replies = truncate(thread(comment), f, limit);
+    else if (f === 'body') out.body = truncate(latestHumanBody(comment), f, limit);
     else {
       const v = comment[f];
       // Absent becomes empty rather than missing: the tabular form needs a

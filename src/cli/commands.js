@@ -342,14 +342,14 @@ const commentCounts = (comments) => {
  * to decide whether refresh is worth telling the agent to run: `counts` is
  * keyed by status across every verdict, and an all-`explain` batch would
  * otherwise still trigger a refresh that reports `relocated: []` for nothing.
- * @param {{verdict: string, status: string, agentReply: unknown}[]} comments
+ * @param {{verdict: string, status: string, replies: {role: string}[]}[]} comments
  * @returns {{outstanding: number, answered: number}}
  */
 const fixCounts = (comments) => {
   const fixes = comments.filter((c) => c.verdict === 'fix');
   return {
     outstanding: fixes.filter((c) => c.status === 'sent').length,
-    answered: fixes.filter((c) => c.agentReply !== null).length,
+    answered: fixes.filter((c) => c.replies.some((r) => r.role === 'agent')).length,
   };
 };
 

@@ -76,19 +76,7 @@ body {
 #note { color: var(--mid); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #counts { color: var(--mid); white-space: nowrap; display: flex; align-items: center; gap: 4px; }
 
-/* Looks like the plain text it replaced, but reads as clickable: the header's
-   other live figure (#activity) is not interactive, so this one needs its own
-   affordance to stand out as the way into the queue. */
-#queue-toggle {
-  border: 0;
-  padding: 2px 6px;
-  margin: -2px -6px;
-  border-radius: var(--radius-sm);
-  color: var(--mid);
-  background: transparent;
-}
-#queue-toggle:hover { color: var(--ink); background: var(--card); }
-#queue-toggle[aria-expanded="true"] { color: var(--accent-ink); background: var(--accent); }
+#queue-open[aria-expanded="true"] { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
 
 #activity { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 #activity:empty { display: none; }
@@ -222,12 +210,43 @@ main { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); mi
   padding: 10px 12px;
 }
 
-.thread.answered { border-color: var(--hair); background: var(--card); display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+/* In split view the unified 88px lands inside the old pane's text column, so
+   a thread must offset by its own side: old starts at 44px, new starts after
+   the old pane, whose width is (100% - 88px) / 2, plus the two 44px gutters,
+   which simplifies to 50% + 44px. */
+#diff.split .thread[data-side="old"] { margin-left: 44px; }
+#diff.split .thread[data-side="new"] { margin-left: calc(50% + 44px); }
+
+.thread.answered, .thread.resolved { border-color: var(--hair); background: var(--card); }
 .thread.stale { border-color: var(--del); }
 .thread .who { color: var(--mid); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
-.thread .was { color: var(--mid); white-space: pre-wrap; }
+.thread .body { white-space: pre-wrap; margin-top: 4px; }
+.thread .was { color: var(--mid); white-space: pre-wrap; margin-top: 8px; }
 .thread .warn { color: var(--del); font-size: 12px; margin-top: 6px; }
 .thread .warn:empty { display: none; }
+
+/* Siblings of the opening comment, not a nested thread of their own: same
+   card ground, a hairline rather than the thread's own brass/hair border, so
+   a long exchange still reads as one thread. Capped and scrollable rather
+   than truncated: `-webkit-line-clamp` would forever hide an early reply, a
+   scrollbar just costs a scroll to see it again. */
+.thread-replies {
+  margin-top: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.reply { border-top: 1px solid var(--hair); padding-top: 6px; }
+.reply .who { color: var(--mid); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+.reply .body { white-space: pre-wrap; margin-top: 2px; }
+.reply.agent .who { color: var(--accent); }
+
+/* Nested inside an answered .thread rather than floated over the diff like
+   the annotate composer, so it must not inherit the outer 88px offset or the
+   540px cap meant for a dialog sitting beside code of its own. */
+.thread .thread.composer.followup { margin: 10px 0 0; max-width: none; }
 
 /* Floats above the diff rather than blending into them: its own ink ground,
    no border, a strong shadow. Stays anchored under the picked line rather

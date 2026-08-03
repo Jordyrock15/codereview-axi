@@ -134,3 +134,75 @@ test('loadState rejects a file whose sessions field is not a record', async (t) 
   const { loadState } = await import('../../src/state/store.js');
   assert.deepEqual(await loadState(), { sessions: {} });
 });
+
+/**
+ * A comment shaped exactly as `addComment`/`applyReply` wrote it before
+ * threads existed: `agentReply`, no `replies` key at all.
+ * @param {Record<string, unknown>} overrides
+ * @returns {any}
+ */
+const legacyComment = (overrides = {}) => ({
+  id: 1,
+  scope: 'line',
+  file: 'a.js',
+  side: 'new',
+  startLine: 2,
+  endLine: 2,
+  quote: 'x',
+  body: 'fix this',
+  verdict: 'fix',
+  status: 'answered',
+  agentReply: { status: 'fixed', body: 'done', at: '2026-01-01T00:00:00.000Z' },
+  deliveredAt: '2026-01-01T00:00:00.000Z',
+  createdAt: '', updatedAt: '',
+  ...overrides,
+});
+
+/**
+ * @param {import('node:test').TestContext} t
+ * @param {any} comment
+ * @returns {Promise<any>}
+ */
+const loadWithComment = async (t, comment) => {
+  const dir = await withHome(t);
+  await mkdir(dir, { recursive: true });
+  await writeFile(path.join(dir, 'state.json'), JSON.stringify({
+    sessions: { legacy: { key: 'legacy', comments: [comment] } },
+  }));
+  const { loadState } = await import('../../src/state/store.js');
+  return (await loadState()).sessions.legacy.comments[0];
+};
+
+test('a legacy comment with an agentReply migrates it to a single agent message in replies', async (t) => {
+  const migrated = await loadWithComment(t, legacyComment());
+
+  assert.ok(!('agentReply' in migrated), 'agentReply must not survive alongside replies');
+  assert.deepEqual(migrated.replies, [{
+    role: 'agent', body: 'done', status: 'fixed', at: '2026-01-01T00:00:00.000Z', deliveredAt: null,
+  }]);
+  // The opening message's own delivery stamp is untouched: that contract predates threads.
+  assert.equal(migrated.deliveredAt, '2026-01-01T00:00:00.000Z');
+});
+
+test('a legacy comment with a null agentReply migrates to an empty replies array', async (t) => {
+  const migrated = await loadWithComment(t, legacyComment({ agentReply: null, status: 'sent' }));
+  assert.deepEqual(migrated.replies, []);
+});
+
+test('a legacy reopened comment migrates to open, since that is what a reopened comment always was: queued', async (t) => {
+  const migrated = await loadWithComment(t, legacyComment({ status: 'reopened' }));
+  assert.equal(migrated.status, 'open');
+});
+
+test('a comment that already has replies is left alone by the migration', async (t) => {
+  const already = {
+    id: 1, scope: 'line', file: 'a.js', side: 'new', startLine: 2, endLine: 2,
+    quote: 'x', body: 'fix this', verdict: 'fix', status: 'answered',
+    replies: [{
+      role: 'agent', body: 'done', status: 'fixed', at: '', deliveredAt: null,
+    }],
+    deliveredAt: null, createdAt: '', updatedAt: '',
+  };
+  const migrated = await loadWithComment(t, already);
+  assert.deepEqual(migrated, already);
+});

@@ -57,7 +57,18 @@
  */
 
 /**
- * A human annotation on the diff.
+ * One message in a comment's thread, after the opening comment.
+ * @interface Message
+ * @typedef {Object} Message
+ * @property {'human'|'agent'} role — Who wrote it.
+ * @property {string} body — What they wrote.
+ * @property {'fixed'|'explained'|'skipped'|null} status — The agent's verdict on its own reply, null for a human message.
+ * @property {string} at — ISO timestamp.
+ * @property {string|null} deliveredAt — ISO timestamp of the long-poll delivery of this message, null until delivered. Always null for an agent message: only human messages are pulled by `cr wait`.
+ */
+
+/**
+ * A human annotation on the diff, and the thread it grows into.
  * @interface Comment
  * @typedef {Object} Comment
  * @property {number} id — Monotonic per session, starting at 1.
@@ -67,11 +78,11 @@
  * @property {number|null} startLine — First anchored line, null for file and session scope.
  * @property {number|null} endLine — Last anchored line, null for file and session scope.
  * @property {string} quote — Exact source lines at creation time, the relocation anchor.
- * @property {string} body — What the human wrote.
+ * @property {string} body — The opening human message.
  * @property {'fix'|'explain'|'ignore'} verdict — What the human wants the agent to do.
- * @property {'open'|'sent'|'answered'|'resolved'|'reopened'|'stale'} status — Lifecycle position.
- * @property {{status: 'fixed'|'explained'|'skipped', body: string, at: string}|null} agentReply — The agent's response, null until replied.
- * @property {string|null} deliveredAt — ISO timestamp of the long-poll delivery, null until delivered.
+ * @property {'open'|'sent'|'answered'|'resolved'|'stale'} status — Lifecycle position.
+ * @property {Message[]} replies — Messages after the opening comment, oldest first.
+ * @property {string|null} deliveredAt — ISO timestamp of the opening message's long-poll delivery, null until delivered.
  * @property {string} createdAt — ISO timestamp.
  * @property {string} updatedAt — ISO timestamp.
  */

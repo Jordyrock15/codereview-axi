@@ -16,7 +16,7 @@ const comment = {
   body: 'Does this handle a negative total?',
   verdict: 'fix',
   status: 'open',
-  agentReply: null,
+  replies: [],
   deliveredAt: null,
   createdAt: '2026-07-31T09:18:19.791Z',
   updatedAt: '2026-07-31T09:18:19.791Z',
@@ -47,6 +47,46 @@ test('quote is present by default, being the comment\'s anchor', () => {
   assert.equal(DEFAULT_COMMENT_FIELDS.includes('quote'), true);
   assert.equal(AGENT_COMMENT_FIELDS.includes('quote'), true);
   assert.match(String(presentComment(comment, ['quote']).quote), /const remainder/);
+});
+
+test('replies replaced agentReply in the field set an agent may ask for', () => {
+  assert.equal(AGENT_COMMENT_FIELDS.includes('agentReply'), false);
+  assert.equal(AGENT_COMMENT_FIELDS.includes('replies'), true);
+});
+
+test('body presents the opening comment when there is no follow-up', () => {
+  assert.equal(presentComment(comment, ['body']).body, 'Does this handle a negative total?');
+});
+
+test('body presents the latest human message once a follow-up has been added, not the opening one', () => {
+  const withFollowup = {
+    ...comment,
+    replies: [
+      { role: 'agent', body: 'yes, clamped to zero', status: 'explained', at: '', deliveredAt: null },
+      { role: 'human', body: 'and what about NaN?', status: null, at: '', deliveredAt: null },
+    ],
+  };
+  assert.equal(presentComment(withFollowup, ['body']).body, 'and what about NaN?');
+});
+
+test('replies flattens the whole thread to one string, opening message first, for a tabular row', () => {
+  const withThread = {
+    ...comment,
+    replies: [
+      { role: 'agent', body: 'clamped to zero', status: 'fixed', at: '', deliveredAt: null },
+      { role: 'human', body: 'and NaN?', status: null, at: '', deliveredAt: null },
+    ],
+  };
+  const out = presentComment(withThread, ['replies']);
+  assert.equal(typeof out.replies, 'string');
+  assert.match(String(out.replies), /^human: Does this handle a negative total\?/);
+  assert.match(String(out.replies), /agent\(fixed\): clamped to zero/);
+  assert.match(String(out.replies), /human: and NaN\?$/);
+});
+
+test('replies is empty-thread-safe: just the opening message when nothing followed', () => {
+  const out = presentComment(comment, ['replies']);
+  assert.equal(out.replies, 'human: Does this handle a negative total?');
 });
 
 test('deliveredAt is unavailable at any --fields value, being internal bookkeeping', () => {

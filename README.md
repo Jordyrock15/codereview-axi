@@ -113,7 +113,7 @@ Every payload carries a `next_step` field, the last key so it prints last: a sin
 
 If the server dies mid-`wait`, `cr wait` exits 1 with the `server-unreachable` slug so the agent reports the failure rather than looping. Sent comments stay queued; re-running `wait` picks them up.
 
-`wait` and `list` print each comment as `id`, `file`, `lines`, `verdict`, `body` and `quote` by default, the fields an agent acts on. `--fields all` asks for everything else too (`scope`, `status`, `agentReply`, `createdAt`, `updatedAt`), and `--fields id,quote` asks for a specific subset. `deliveredAt` is internal delivery bookkeeping and is never available, at any `--fields` value.
+`wait` and `list` print each comment as `id`, `file`, `lines`, `verdict`, `body` and `quote` by default, the fields an agent acts on. `body` is the latest human message in the thread: the opening comment, unless the human has since added a follow-up, in which case it is that follow-up. `--fields all` asks for everything else too (`scope`, `status`, `replies`, `createdAt`, `updatedAt`); `replies` is the whole thread flattened to one string, opening message first, so the agent can see what it already answered. `--fields id,quote` asks for a specific subset. `deliveredAt` is internal delivery bookkeeping and is never available, at any `--fields` value.
 
 `body` and `quote` truncate past 2000 characters, with a hint naming the field and the total, because a human can quote a 1500-line selection and hand it straight back. `--full` on `wait` or `list` disables this.
 

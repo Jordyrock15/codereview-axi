@@ -9,7 +9,9 @@ import { StateError } from '../state/errors.js';
 import { guard, checkOrigin } from './security.js';
 import { createHub } from './sse.js';
 import { createRouter } from './router.js';
-import { addComment, patchComment, markSent, applyReply, unsentCount } from '../state/comments.js';
+import {
+  addComment, patchComment, markSent, applyReply, addFollowup, removeQueued, hasUndeliveredHuman, markDelivered, unsentCount,
+} from '../state/comments.js';
 import { takeLease, releaseLease } from './lease.js';
 import { commentContext, expandContext } from '../diff/context.js';
 import { shellHtml, assetResponse } from './ui.js';
@@ -339,9 +341,10 @@ export const createApp = ({
     {
       // No route existed for this before; the closest prior art is /note and
       // /view, which also mutate a session field directly here rather than
-      // through src/state/comments.js. Scoped to open/reopened only: once a
-      // comment is sent the agent may already be acting on it, and pulling it
-      // back here would silently desync the session from what it was told.
+      // through src/state/comments.js. Scoped to open only: once a comment is
+      // sent the agent may already be acting on it, and pulling it back here
+      // would silently desync the session from what it was told. A comment
+      // re-queued by a follow-up is not deleted outright: see removeQueued.
       method: 'DELETE',
       pattern: '/api/sessions/:key/comments/:id',
       handler: async (ctx) => {
@@ -349,19 +352,28 @@ export const createApp = ({
         const id = Number(ctx.params.id);
         if (!Number.isInteger(id)) throw new StateError(400, 'id must be an integer');
 
-        await mutateState((state) => {
-          const live = state.sessions[ctx.params.key];
-          const index = live.comments.findIndex((c) => c.id === id);
-          if (index === -1) throw new StateError(404, `no comment with id ${id}`);
-          if (!['open', 'reopened'].includes(live.comments[index].status)) {
-            throw new StateError(409, `comment ${id} is ${live.comments[index].status}, not queued`);
-          }
-          live.comments.splice(index, 1);
-          live.updatedAt = new Date(now()).toISOString();
-        });
+        const result = await mutateState((state) => removeQueued(state.sessions[ctx.params.key], id, now()));
 
-        hub.publish(ctx.params.key, 'comment', { id, removed: true });
-        return { body: { id, removed: true } };
+        hub.publish(ctx.params.key, 'comment', result.removed ? { id, removed: true } : result.comment);
+        return { body: result.removed ? { id, removed: true } : result.comment };
+      },
+    },
+    {
+      // Replaces Reopen: new text rather than the same body resent, and
+      // queued like any other unsent comment so the human can check it (or
+      // Remove it) before it reaches the agent.
+      method: 'POST',
+      pattern: '/api/sessions/:key/comments/:id/followup',
+      handler: async (ctx) => {
+        requireOpen(await guarded(ctx));
+        const id = Number(ctx.params.id);
+        if (!Number.isInteger(id)) throw new StateError(400, 'id must be an integer');
+
+        const comment = await mutateState((state) => (
+          addFollowup(state.sessions[ctx.params.key], id, String(ctx.body?.body ?? ''), now())
+        ));
+        hub.publish(ctx.params.key, 'comment', comment);
+        return { status: 201, body: comment };
       },
     },
     {
@@ -412,13 +424,15 @@ export const createApp = ({
         await mutateState((state) => takeLease(state.sessions[ctx.params.key], holder, now()));
 
         try {
-          // deliveredAt is what makes delivery at-most-once: a re-poll after a
-          // crash sees an empty queue rather than replaying the same work.
+          // deliveredAt is what makes delivery at-most-once, now per message
+          // rather than per comment: a follow-up on a comment already
+          // delivered once must still surface, and a re-poll after a crash
+          // must not replay a message this round already stamped.
           const drain = () => mutateState((state) => {
             const live = state.sessions[ctx.params.key];
-            const sent = live.comments.filter((c) => c.status === 'sent' && !c.deliveredAt);
+            const sent = live.comments.filter(hasUndeliveredHuman);
             const at = new Date(now()).toISOString();
-            for (const comment of sent) comment.deliveredAt = at;
+            for (const comment of sent) markDelivered(comment, at);
             return { live, sent };
           });
 

@@ -43,7 +43,7 @@ const comment = (overrides = {}) => ({
   body: 'fix this',
   verdict: 'fix',
   status: 'open',
-  agentReply: null,
+  replies: [],
   createdAt: '', updatedAt: '',
   ...overrides,
 });
@@ -104,7 +104,7 @@ test('relocates a multi-line range and keeps its length', () => {
 test('never re-anchors an answered comment, even when its quote is gone', () => {
   /** @type {any} */
   const session = {
-    comments: [comment({ status: 'answered', agentReply: { status: 'fixed', body: 'done', at: '' } })],
+    comments: [comment({ status: 'answered', replies: [{ role: 'agent', status: 'fixed', body: 'done', at: '', deliveredAt: null }] })],
     updatedAt: '',
   };
   const snapshot = snapshotOf('a.js', ['x', 'y', 'rewritten entirely']);
@@ -122,12 +122,21 @@ test('never re-anchors a resolved comment', () => {
   assert.equal(session.comments[0].status, 'resolved');
 });
 
-test('re-anchors a reopened comment', () => {
+test('re-anchors a comment re-queued by a follow-up, same as any other open comment', () => {
   /** @type {any} */
-  const session = { comments: [comment({ status: 'reopened' })], updatedAt: '' };
+  const session = {
+    comments: [comment({
+      status: 'open',
+      replies: [
+        { role: 'agent', status: 'fixed', body: 'done', at: '', deliveredAt: null },
+        { role: 'human', status: null, body: 'one more thing', at: '', deliveredAt: null },
+      ],
+    })],
+    updatedAt: '',
+  };
   reanchor(session, snapshotOf('a.js', ['x', 'y', 'z', 'target line']));
   assert.equal(session.comments[0].startLine, 4);
-  assert.equal(session.comments[0].status, 'reopened');
+  assert.equal(session.comments[0].status, 'open');
 });
 
 test('marks an open comment stale when its file left the diff entirely', () => {

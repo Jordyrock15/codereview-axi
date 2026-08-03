@@ -12,7 +12,7 @@ import { queueEntries } from '../../src/server/public/queue.js';
  */
 const comment = (overrides = {}) => ({
   id: 1, scope: 'line', file: 'a.js', side: 'new', startLine: 2, endLine: 2,
-  quote: 'x', body: 'fix this', verdict: 'fix', status: 'open', agentReply: null,
+  quote: 'x', body: 'fix this', verdict: 'fix', status: 'open', replies: [],
   deliveredAt: null, createdAt: '', updatedAt: '', ...overrides,
 });
 
@@ -21,11 +21,20 @@ test('an open comment appears in the queue', () => {
   assert.deepEqual(entries, [{ id: 1, file: 'a.js', verdict: 'fix', body: 'fix this', location: 'a.js:2' }]);
 });
 
-test('a reopened comment appears in the queue alongside open ones', () => {
+test('a comment re-queued by a follow-up shows the follow-up text, not the opening body', () => {
   const entries = queueEntries({
-    comments: [comment({ id: 1, status: 'open' }), comment({ id: 2, status: 'reopened' })],
+    comments: [comment({
+      id: 1,
+      status: 'open',
+      replies: [
+        { role: 'agent', body: 'fixed it', status: 'fixed', at: '', deliveredAt: null },
+        { role: 'human', body: 'actually also check the negative case', status: null, at: '', deliveredAt: null },
+      ],
+    })],
   });
-  assert.deepEqual(entries.map((e) => e.id), [1, 2]);
+  assert.deepEqual(entries, [{
+    id: 1, file: 'a.js', verdict: 'fix', body: 'actually also check the negative case', location: 'a.js:2',
+  }]);
 });
 
 test('sent, answered, resolved and stale comments are excluded', () => {

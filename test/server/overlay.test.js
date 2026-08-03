@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  OVERLAY_SHOW_DELAY_MS, OVERLAY_MIN_VISIBLE_MS, overlayVisible, remainingVisibleMs,
+  OVERLAY_SHOW_DELAY_MS, OVERLAY_MIN_VISIBLE_MS,
+  OVERLAY_REFRESHED_SHOW_DELAY_MS, OVERLAY_REFRESHED_MIN_VISIBLE_MS,
+  overlayVisible, remainingVisibleMs,
 } from '../../src/server/public/overlay.js';
 
 test('overlayVisible stays hidden before the show-delay has elapsed', () => {
@@ -39,4 +41,16 @@ test('remainingVisibleMs floors at zero once the minimum has already elapsed, ne
 
 test('remainingVisibleMs honours a custom minimum', () => {
   assert.equal(remainingVisibleMs(10, 30), 20);
+});
+
+test('overlayVisible reveals immediately for the refreshed cause, no show-delay', () => {
+  assert.equal(
+    overlayVisible({ elapsedMs: 0, finished: false, showDelayMs: OVERLAY_REFRESHED_SHOW_DELAY_MS }),
+    true,
+  );
+});
+
+test('remainingVisibleMs honours the longer refreshed minimum', () => {
+  assert.equal(remainingVisibleMs(0, OVERLAY_REFRESHED_MIN_VISIBLE_MS), OVERLAY_REFRESHED_MIN_VISIBLE_MS);
+  assert.equal(remainingVisibleMs(OVERLAY_REFRESHED_MIN_VISIBLE_MS, OVERLAY_REFRESHED_MIN_VISIBLE_MS), 0);
 });

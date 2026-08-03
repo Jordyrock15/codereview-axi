@@ -5,7 +5,7 @@
  * @typedef {import('../types.js').Comment} Comment
  */
 
-const ANCHORABLE = ['open', 'reopened'];
+const ANCHORABLE = ['open'];
 
 /**
  * Flattens a file's hunks into a line-number keyed view of one side.
