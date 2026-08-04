@@ -111,7 +111,9 @@ const checkRouteKeys = (routes) => {
 
 /**
  * Drops a mount out of the stack and hands the globals back to whichever mount
- * is on top now, or to the pristine set once the stack empties.
+ * is on top now, or to the pristine set once the stack empties. `fetch` is the
+ * one exception: it stays inert rather than real, so a handler still in flight
+ * cannot reach the network from a dead window. No test needs a live `fetch`.
  * @param {MountFrame} frame
  * @returns {void}
  */

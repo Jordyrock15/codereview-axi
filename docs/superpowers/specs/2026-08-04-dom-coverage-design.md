@@ -1,7 +1,7 @@
 # DOM coverage for the review UI
 
 Date: 2026-08-04
-Status: approved design, not yet implemented
+Status: implemented, PR #29
 
 ## Problem
 
