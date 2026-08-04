@@ -543,26 +543,13 @@ export const createApp = ({
                 : { before: [], after: [] },
             })));
 
-            // Stamp only once the payload is built. Stamping first meant every
-            // file read for context happened after the comments were already
-            // persisted as delivered, so a poll that died in that window
-            // consumed them for good: the browser showed them sent forever and
-            // no later `cr wait` could ever surface them again.
-            //
-            // The guarantee that nothing moved under us is the lock, not this
-            // check: edits and follow-ups take the same one. updatedAt is kept as
-            // a backstop for any future writer that forgets to, and it fails the
-            // safe way, leaving the comment unstamped to be redelivered rather
-            // than stamping text this response never carried. On its own it
-            // would be unsound, being only millisecond-resolution.
-            const seen = new Map(sent.map((comment) => [comment.id, comment.updatedAt]));
-            await mutateState((state) => {
-              const at = new Date(now()).toISOString();
-              for (const comment of state.sessions[ctx.params.key].comments) {
-                if (seen.get(comment.id) !== comment.updatedAt) continue;
-                if (hasUndeliveredHuman(comment)) markDelivered(comment, at);
-              }
-            });
+              // Nothing is stamped here. Handing the payload to the socket is
+              // not proof the agent received it: a poll killed between this
+              // response and the agent reading it used to consume the batch for
+              // good, and a sixteen-comment review was lost to exactly that.
+              // The agent acks through /pending/ack once its output is written,
+              // and only then are these marked delivered. Delivery is therefore
+              // at-least-once: a lost ack costs a duplicate, never the comments.
 
             return {
               body: {
@@ -578,6 +565,45 @@ export const createApp = ({
         }
       },
     },
+    {
+      method: 'POST',
+      pattern: '/api/sessions/:key/pending/ack',
+      handler: async (ctx) => {
+        await guarded(ctx);
+
+        // {id, updatedAt} rather than bare ids: a comment edited between the
+        // poll and this ack has different text from the one that was delivered,
+        // and stamping it would lose the edit exactly as the old stamp-first
+        // code did. A mismatch simply leaves it deliverable.
+        const raw = Array.isArray(ctx.body?.delivered) ? ctx.body.delivered : null;
+        if (raw === null) throw new StateError(400, 'delivered must be an array of {id, updatedAt}');
+
+        /** @type {Map<number, string>} */
+        const claimed = new Map();
+        for (const entry of raw) {
+          const id = Number(entry?.id);
+          if (!Number.isInteger(id)) throw new StateError(400, 'every delivered entry needs an integer id');
+          claimed.set(id, String(entry?.updatedAt ?? ''));
+        }
+
+        // Same lock as the poll and the edit routes, so an ack cannot interleave
+        // with a delivery that is still choosing what to send.
+        return deliverLock(ctx.params.key, () => mutateState((state) => {
+          const live = state.sessions[ctx.params.key];
+          const at = new Date(now()).toISOString();
+          const acked = [];
+          for (const comment of live.comments) {
+            if (!claimed.has(comment.id)) continue;
+            if (claimed.get(comment.id) !== comment.updatedAt) continue;
+            if (!hasUndeliveredHuman(comment)) continue;
+            markDelivered(comment, at);
+            acked.push(comment.id);
+          }
+          return { body: { acked, at } };
+        }));
+      },
+    },
+
     {
       method: 'GET',
       pattern: '/api/sessions/:key/stream',

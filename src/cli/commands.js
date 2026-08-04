@@ -131,7 +131,7 @@ const unwrap = (res) => {
  * @typedef {(number: number|string, options?: {run?: (args: string[], cwd?: string) => Promise<string>, cwd?: string}) => Promise<{base: string, head: string}>} ResolvePr
  */
 
-/** @type {Record<string, (input: {flags: Record<string, string|boolean>, cwd: string, port: number, resolvePr: ResolvePr, homedir: () => string}) => Promise<unknown>>} */
+/** @type {Record<string, (input: {flags: Record<string, string|boolean>, cwd: string, port: number, resolvePr: ResolvePr, homedir: () => string, defer: (fn: () => Promise<void>) => void}) => Promise<unknown>>} */
 const HANDLERS = {
   open: async ({ flags, cwd, port, resolvePr }) => {
     const root = await toplevel(cwd);
@@ -204,7 +204,7 @@ const HANDLERS = {
     return rest;
   },
 
-  wait: async ({ flags, cwd, port }) => {
+  wait: async ({ flags, cwd, port, defer }) => {
     const { key, token } = await resolveSession(cwd);
     const timeout = parseTimeout(flags);
     requireValue(flags, 'say', '"check the rounding first"');
@@ -229,6 +229,16 @@ const HANDLERS = {
       const { comments, ...rest } = pending;
       return { ...rest, empty: `no comments (0 of ${session.comments.length})`, counts };
     }
+
+    // The server no longer marks these delivered when it sends them: it waits
+    // for this ack, and `run` fires it only once the output has been written.
+    // Anything that kills the process before then leaves them deliverable, so
+    // the worst case is an agent seeing a comment twice rather than a human
+    // watching sixteen of them vanish.
+    defer(async () => {
+      const delivered = pending.comments.map((/** @type {any} */ c) => ({ id: c.id, updatedAt: c.updatedAt }));
+      await request(port, 'POST', `/api/sessions/${key}/pending/ack`, { delivered }, token);
+    });
 
     return { ...pending, comments: pending.comments.map((/** @type {any} */ c) => presentComment(c, fields, { limit })), counts };
   },
@@ -404,7 +414,7 @@ const liveState = async (cwd) => {
  * `homedir` is injectable so `cr setup --global` can be exercised against a
  * throwaway directory instead of a developer's real home.
  * @param {{argv: string[], cwd: string, env?: NodeJS.ProcessEnv, resolvePr?: ResolvePr, homedir?: () => string}} input
- * @returns {Promise<{code: number, out: string}>}
+ * @returns {Promise<{code: number, out: string, after?: () => Promise<void>}>} `after` must be awaited by the caller only once `out` has been written: it acknowledges delivery of what was just printed.
  */
 export const run = async ({
   argv, cwd, resolvePr = defaultResolvePr, homedir = os.homedir,
@@ -475,18 +485,36 @@ export const run = async ({
   // the two checks that every path reaching here has one.
   if (!handler) return fail(new CliError(1, `unknown verb "${verb}"`, 'usage'));
 
+  /**
+   * Work that must wait until the caller has emitted the output, which is why a
+   * handler cannot simply await it. Acknowledging delivery is the case that
+   * matters: ack first and a process killed before the write still loses the
+   * comments, which is the whole bug being fixed.
+   * @type {(() => Promise<void>)[]}
+   */
+  const deferred = [];
+  /**
+   * @param {() => Promise<void>} fn
+   * @returns {void}
+   */
+  const defer = (fn) => { deferred.push(fn); };
+  /** @returns {Promise<void>} */
+  const after = async () => {
+    for (const fn of deferred) await fn();
+  };
+
   try {
     // setup touches Claude Code's own settings, not the review server, so it
     // must not start a daemon as a side effect of installing a hook.
     const port = verb === 'setup' ? -1 : await ensureServer();
     const result = await handler({
-      flags, cwd, port, resolvePr, homedir,
+      flags, cwd, port, resolvePr, homedir, defer,
     });
     const payload = /** @type {Record<string, unknown>} */ (forDisplay(result));
-    if (flags['no-help'] === true) return { code: 0, out: asText(payload) };
+    if (flags['no-help'] === true) return { code: 0, out: asText(payload), after };
     const withHelp = { ...payload, help: nextSteps(verb, payload) };
     const step = nextStep(verb, payload);
-    return { code: 0, out: asText(step === undefined ? withHelp : { ...withHelp, next_step: step }) };
+    return { code: 0, out: asText(step === undefined ? withHelp : { ...withHelp, next_step: step }), after };
   } catch (err) {
     const code = err instanceof CliError ? err.code : 1;
     const slug = err instanceof CliError ? err.slug : 'error';
