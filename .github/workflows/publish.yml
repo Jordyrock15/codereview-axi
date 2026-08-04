@@ -1,9 +1,18 @@
 name: publish
 
 on:
+  # A release published by hand. release-please cannot use this path: a release
+  # it creates carries GITHUB_TOKEN, and events from that token start no workflow.
   release:
     types: [published]
+  # Which is why release-please dispatches this instead. workflow_dispatch is
+  # documented as an exception to that rule and always triggers a run.
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to check against package.json, for example v0.1.8'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -28,10 +37,12 @@ jobs:
 
       # The tag reaches this through env, never interpolated into the script:
       # a tag is attacker-shaped input and `run:` would execute it.
+      # Runs on either path: the release event carries the tag, and the dispatch
+      # is given it, so an automated publish is checked as strictly as a manual one.
       - name: check the release tag matches package.json
-        if: github.event_name == 'release'
+        if: ${{ github.event.release.tag_name || inputs.tag }}
         env:
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
           version=$(node -p 'require("./package.json").version')
           if [ "${TAG#v}" != "$version" ]; then
