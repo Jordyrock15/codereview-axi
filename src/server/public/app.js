@@ -136,12 +136,23 @@ const counts = () => {
   $('queue-open').textContent = `Queued ${unsent}`;
   $('answered-open').textContent = `Answered ${answered}`;
   $('resolved-open').textContent = `Resolved ${resolved}`;
-  const send = /** @type {HTMLButtonElement} */ ($('send'));
-  send.disabled = unsent === 0;
-  send.textContent = unsent === 0 ? 'Send' : `Send ${unsent}`;
-  const queueSend = /** @type {HTMLButtonElement} */ ($('queue-send'));
-  queueSend.disabled = unsent === 0;
-  queueSend.textContent = unsent === 0 ? 'Send' : `Send ${unsent}`;
+  // One round at a time. A batch sent while the agent still owes replies on the
+  // last one arrives mid-edit and gets answered against code that has already
+  // moved, and it was how sixteen comments ended up in flight at once with no
+  // way to tell which round they belonged to. Queue as much as you like; the
+  // send waits.
+  const awaitingAgent = comments.filter((c) => c.status === 'sent').length;
+  const blocked = awaitingAgent > 0;
+  const why = blocked
+    ? `The agent still owes ${awaitingAgent === 1 ? 'a reply' : `${awaitingAgent} replies`}. Your drafts stay queued until it has answered.`
+    : '';
+
+  for (const id of ['send', 'queue-send']) {
+    const button = /** @type {HTMLButtonElement} */ ($(id));
+    button.disabled = unsent === 0 || blocked;
+    button.textContent = unsent === 0 ? 'Send' : `Send ${unsent}`;
+    button.title = why;
+  }
 };
 
 /**
@@ -204,8 +215,17 @@ const queueEntryEl = (entry, removable) => {
 
   const open = /** @type {HTMLButtonElement} */ (el('button', 'queue-entry-open'));
   open.type = 'button';
+  // Split rather than dropped in whole: a deep path is one unbreakable string,
+  // so it forced every row wider than the 360px panel and pushed the bodies out
+  // of sight. The directory ellipsises; the file and line survive.
+  const loc = el('span', 'queue-entry-loc');
+  const { dir, base } = splitPathLabel(entry.location);
+  if (dir) loc.append(el('span', 'dir', dir));
+  loc.append(el('span', 'base', base));
+  loc.title = entry.location;
+
   open.append(
-    el('span', 'queue-entry-loc', entry.location),
+    loc,
     el('span', 'queue-entry-verdict', entry.verdict),
     el('span', 'queue-entry-body', entry.body),
   );
@@ -292,6 +312,29 @@ const toggleQueuePanel = (group) => {
 };
 
 /**
+ * Fills the composer's heading. A deep path rendered as one string wraps onto
+ * three lines at this size and bursts the dialog, so the directory ellipsises
+ * while the basename and line range, the parts that say what is being
+ * annotated, stay whole. The full path goes in the tooltip.
+ * @param {HTMLElement} who
+ * @param {string} path
+ * @param {number} from
+ * @param {number} to
+ * @returns {void}
+ */
+const fillComposerHeading = (who, path, from, to) => {
+  const range = from === to ? String(from) : `${from}-${to}`;
+  const { dir, base } = splitPathLabel(path);
+
+  const where = el('span', 'annotate-path');
+  if (dir) where.append(el('span', 'dir', dir));
+  where.append(el('span', 'base', `${base}:${range}`));
+
+  who.replaceChildren(el('span', 'annotate-label', 'Annotate'), where);
+  who.title = `${path}:${range}`;
+};
+
+/**
  * Switches to the comment's file if needed (the same path the files-nav
  * click handler takes) and scrolls its thread into view.
  * @param {number} id
@@ -326,7 +369,7 @@ const renderActivity = () => {
   node.dataset.polling = String(state.polling);
 
   const label = state.delivery === 'waiting'
-    ? (state.polling ? 'agent connecting' : 'waiting for agent')
+    ? (state.polling ? 'agent listening' : 'waiting for agent')
     : state.delivery === 'working'
       ? (state.polling ? 'agent working' : 'agent has it')
       : (state.polling ? 'agent connected' : '');
@@ -422,7 +465,9 @@ const openComposer = (file, afterRow) => {
   box.dataset.side = picking.side;
   const from = Math.min(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
   const to = Math.max(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
-  box.append(el('div', 'who', `Annotate ${file.path}:${from === to ? from : `${from}-${to}`}`));
+  const heading = el('div', 'who');
+  fillComposerHeading(heading, file.path, from, to);
+  box.append(heading);
 
   const text = document.createElement('textarea');
   text.placeholder = 'What is wrong, and what should change';
@@ -521,7 +566,7 @@ const updateComposerHeader = (box, file) => {
   const from = Math.min(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
   const to = Math.max(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
   const who = box.querySelector('.who');
-  if (who) who.textContent = `Annotate ${file.path}:${from === to ? from : `${from}-${to}`}`;
+  if (who) fillComposerHeading(/** @type {HTMLElement} */ (who), file.path, from, to);
 
   // A restart note from an earlier rejected shift-click must not linger past
   // the next successful pick, and this is the only path a successful

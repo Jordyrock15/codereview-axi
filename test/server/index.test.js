@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { once } from 'node:events';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -181,4 +181,31 @@ test('close finishes even while a client holds a connection open', async (t) => 
 
   assert.equal(settled, 'closed', 'shutdown must not wait on a client to let go');
   await assert.rejects(fetch('http://127.0.0.1:45322/api/health'), 'the port must be free afterwards');
+});
+
+test('concurrent ensureServer calls start one daemon, not one each', async (t) => {
+  const home = await withHome(t);
+  const { ensureServer, shutdown, probe } = await import('../../src/cli/client.js');
+
+  // The daemon writes server.json itself, so before the start lock existed each
+  // concurrent caller started its own and the last write won. The losers kept
+  // listening with nothing referencing them: eight strays were found on one
+  // machine, one per open.
+  const ports = await Promise.all([ensureServer(), ensureServer(), ensureServer(), ensureServer()]);
+
+  t.after(async () => {
+    for (const port of new Set(ports)) {
+      const live = await probe(port);
+      if (live.ok && live.pid !== undefined) await shutdown(port, live.pid);
+    }
+  });
+
+  assert.equal(new Set(ports).size, 1, 'every caller must be handed the same daemon');
+
+  const recorded = JSON.parse(await readFile(path.join(home, 'server.json'), 'utf8'));
+  assert.equal(recorded.port, ports[0], 'and it must be the one that got recorded');
+
+  // Left behind, the lock would make the next invocation wait out its whole
+  // staleness window before starting anything.
+  await assert.rejects(readFile(path.join(home, 'server.json.lock'), 'utf8'));
 });

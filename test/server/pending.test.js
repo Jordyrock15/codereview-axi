@@ -84,25 +84,79 @@ test('a second holder polling a leased session gets 409', async (t) => {
   await first;
 });
 
-test('the same holder may re-poll, which is how a killed poll recovers', async (t) => {
+test('a killed poll loses nothing, because an unacked comment comes back', async (t) => {
   const { call, at } = await setup(t);
   await call('POST', at('/comments'), comment());
   await call('POST', at('/send'));
 
+  // The first poll stands in for one whose response never reached the agent: it
+  // read the comment and then died without acking. Sixteen real comments were
+  // lost to that, so the redelivery here is the whole point of the ack.
   assert.equal((await call('GET', at('/pending?holder=111&timeout=1'))).json.comments.length, 1);
+  assert.equal((await call('GET', at('/pending?holder=111&timeout=1'))).json.comments.length, 1,
+    'without an ack the comment must still be deliverable');
+});
+
+test('an acked comment is not delivered again', async (t) => {
+  const { call, at } = await setup(t);
+  await call('POST', at('/comments'), comment());
+  await call('POST', at('/send'));
+
+  const [first] = (await call('GET', at('/pending?holder=111&timeout=1'))).json.comments;
+  const ack = await call('POST', at('/pending/ack'), { delivered: [{ id: first.id, updatedAt: first.updatedAt }] });
+  assert.deepEqual(ack.json.acked, [first.id]);
+
   assert.equal((await call('GET', at('/pending?holder=111&timeout=1'))).json.comments.length, 0);
 });
 
-test('comments are delivered at most once', async (t) => {
+test('acking twice is harmless', async (t) => {
+  const { call, at } = await setup(t);
+  await call('POST', at('/comments'), comment());
+  await call('POST', at('/send'));
+
+  const [first] = (await call('GET', at('/pending?holder=111&timeout=1'))).json.comments;
+  const body = { delivered: [{ id: first.id, updatedAt: first.updatedAt }] };
+  assert.deepEqual((await call('POST', at('/pending/ack'), body)).json.acked, [first.id]);
+  // A retried ack must not error: the CLI may send it again after a transport hiccup.
+  assert.deepEqual((await call('POST', at('/pending/ack'), body)).json.acked, []);
+});
+
+test('an ack whose comment has changed since delivery does not consume it', async (t) => {
+  const { call, at } = await setup(t);
+  await call('POST', at('/comments'), comment());
+  await call('POST', at('/send'));
+
+  const [first] = (await call('GET', at('/pending?holder=111&timeout=1'))).json.comments;
+  await call('PATCH', at(`/comments/${first.id}`), { body: 'actually, ignore the rounding' });
+
+  // The delivered payload carried the old text, so stamping on a bare id would
+  // lose the edit exactly as the old stamp-first code did.
+  assert.deepEqual((await call('POST', at('/pending/ack'), { delivered: [{ id: first.id, updatedAt: first.updatedAt }] })).json.acked, []);
+  const again = (await call('GET', at('/pending?holder=111&timeout=1'))).json.comments;
+  assert.equal(again.length, 1);
+  assert.equal(again[0].body, 'actually, ignore the rounding');
+});
+
+test('ack rejects a body that is not a delivered array', async (t) => {
+  const { call, at } = await setup(t);
+  assert.equal((await call('POST', at('/pending/ack'), {})).status, 400);
+  assert.equal((await call('POST', at('/pending/ack'), { delivered: [{ updatedAt: 'x' }] })).status, 400);
+});
+
+test('delivery is at-least-once: acked comments stop coming, unacked ones do not', async (t) => {
   const { call, at } = await setup(t);
   await call('POST', at('/comments'), comment());
   await call('POST', at('/send'));
 
   const first = (await call('GET', at('/pending?holder=111&timeout=1'))).json;
-  const second = (await call('GET', at('/pending?holder=111&timeout=1'))).json;
-
   assert.equal(first.comments.length, 1);
-  assert.equal(second.comments.length, 0, 'a delivered comment is not re-delivered');
+
+  await call('POST', at('/pending/ack'), {
+    delivered: first.comments.map((/** @type {any} */ c) => ({ id: c.id, updatedAt: c.updatedAt })),
+  });
+
+  const second = (await call('GET', at('/pending?holder=111&timeout=1'))).json;
+  assert.equal(second.comments.length, 0, 'an acked comment is not re-delivered');
 });
 
 test('pending reports a session the human closed', async (t) => {
@@ -132,27 +186,27 @@ test('pending releases the lease when it returns', async (t) => {
   assert.equal(res.status, 200);
 });
 
-test('two concurrent polls from the same holder deliver a comment once, not twice', async (t) => {
+test('concurrent polls from the same holder never lose a comment', async (t) => {
   const { call, at } = await setup(t);
   await call('POST', at('/comments'), comment());
   await call('POST', at('/send'));
 
-  // takeLease lets a holder re-enter, which is what makes re-polling work, so
-  // the lease cannot be what keeps these two apart. Building the payload before
-  // stamping opened a window where both could read the same comment and both
-  // return it; at-most-once delivery has to survive that.
-  //
-  // Timing-dependent, so treat it as a smoke test rather than a proof:
-  // Promise.all does not force both requests past the deciding read before
-  // either stamps, so a broken build could pass if the first finished before the
-  // second started reading. It does fail on an unlocked build in practice,
-  // which is why it is here. Proving it deterministically needs an injection
-  // seam in the context build that createApp does not currently offer.
+  // Under acknowledged delivery the invariant is that nothing is lost, not that
+  // nothing repeats: neither poll has acked, so both are entitled to the
+  // comment. takeLease already stops two different agents overlapping, and a
+  // duplicate costs the agent a second look while a loss costs the human their
+  // review. The old assertion here was exactly-once, which stopped being true
+  // the moment the poll stopped stamping.
   const [a, b] = await Promise.all([
     call('GET', at('/pending?holder=111&timeout=1')),
     call('GET', at('/pending?holder=111&timeout=1')),
   ]);
 
   const delivered = a.json.comments.length + b.json.comments.length;
-  assert.equal(delivered, 1, 'the comment must arrive in exactly one of the two responses');
+  assert.ok(delivered >= 1, 'at least one poll must carry the comment');
+
+  const carrier = a.json.comments[0] ?? b.json.comments[0];
+  await call('POST', at('/pending/ack'), { delivered: [{ id: carrier.id, updatedAt: carrier.updatedAt }] });
+  assert.equal((await call('GET', at('/pending?holder=111&timeout=1'))).json.comments.length, 0,
+    'one ack ends it, whichever poll carried it');
 });

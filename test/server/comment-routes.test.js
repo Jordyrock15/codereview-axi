@@ -346,3 +346,44 @@ test('PATCH note replaces the note and publishes it', async (t) => {
   assert.deepEqual(events, ['note']);
   assert.equal((await call('GET', at(''))).json.note, 'check the rounding first');
 });
+
+test('POST send is refused while the agent still owes a reply', async (t) => {
+  const { call, at } = await setup(t);
+  await call('POST', at('/comments'), lineBody());
+  assert.equal((await call('POST', at('/send'))).status, 200);
+
+  // A second batch queued while the first round is unanswered.
+  await call('POST', at('/comments'), lineBody({ startLine: 3, endLine: 3, quote: 'three' }));
+  const refused = await call('POST', at('/send'));
+
+  assert.equal(refused.status, 409);
+  assert.match(refused.json.error, /still owes a reply on comment 1/);
+  assert.match(refused.json.error, /a send waits for the round to finish/);
+});
+
+test('the send block lifts once the agent has replied', async (t) => {
+  const { call, at } = await setup(t);
+  await call('POST', at('/comments'), lineBody());
+  await call('POST', at('/send'));
+  await call('POST', at('/comments'), lineBody({ startLine: 3, endLine: 3, quote: 'three' }));
+  assert.equal((await call('POST', at('/send'))).status, 409);
+
+  await call('POST', at('/replies'), { id: 1, status: 'fixed', body: 'done' });
+
+  // Nothing is owed now, so the queued second comment goes.
+  const res = await call('POST', at('/send'));
+  assert.equal(res.status, 200);
+  assert.equal(res.json.sent, 1);
+});
+
+test('the block cannot strand the human: an undelivered round is still pollable', async (t) => {
+  const { call, at } = await setup(t);
+  await call('POST', at('/comments'), lineBody());
+  await call('POST', at('/send'));
+
+  // The agent that sent this round never came back. Because delivery is only
+  // marked on ack, the comments are still waiting for whichever agent polls
+  // next, so replying, and with it the send block lifting, stays reachable.
+  const pending = await call('GET', at('/pending?holder=111&timeout=1'));
+  assert.equal(pending.json.comments.length, 1);
+});

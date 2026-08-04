@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
-import { readFile, rm } from 'node:fs/promises';
+import { readFile, rm, writeFile, stat, mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
 import { serverPath } from '../paths.js';
 import { readServerFile, findPort, DEFAULT_PORT } from '../server/index.js';
 
@@ -93,6 +94,55 @@ const spawnDaemon = async (port) => {
   throw new CliError(1, `no server came up on port ${port}`, 'server-unreachable');
 };
 
+/** How long a start lock may sit before it is treated as abandoned. */
+const START_LOCK_MS = 5000;
+const lockPath = () => `${serverPath()}.lock`;
+
+/**
+ * Claims the exclusive right to start a daemon. Without this, two `cr` processes
+ * beginning while no daemon is recorded each start one, and since the daemon
+ * writes server.json itself the last write wins and the loser is left listening
+ * forever with nothing referencing it. That is how a port range fills with
+ * strays: eight were found on one machine, one per open.
+ * @returns {Promise<boolean>} Whether this process may start a daemon.
+ */
+const takeStartLock = async () => {
+  await mkdir(dirname(lockPath()), { recursive: true, mode: 0o700 });
+  try {
+    await writeFile(lockPath(), `${process.pid}\n`, { flag: 'wx', mode: 0o600 });
+    return true;
+  } catch {
+    // A starter that died holding the lock must not wedge every later
+    // invocation, so an old one is taken rather than waited on.
+    try {
+      if (Date.now() - (await stat(lockPath())).mtimeMs > START_LOCK_MS) {
+        await rm(lockPath(), { force: true });
+        return await takeStartLock();
+      }
+    } catch {
+      // It vanished under us, which means the winner finished: fall through.
+    }
+    return false;
+  }
+};
+
+/**
+ * Waits for whoever holds the start lock to record a usable daemon.
+ * @returns {Promise<number|null>} The port, or null if none appeared in time.
+ */
+const awaitStartedDaemon = async () => {
+  const deadline = Date.now() + START_LOCK_MS + 1000;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const recorded = await readServerFile();
+    if (recorded) {
+      const live = await probe(recorded.port);
+      if (live.ok && live.version === pkg.version) return recorded.port;
+    }
+  }
+  return null;
+};
+
 /**
  * Discovers or starts the server, replacing one that predates this CLI.
  * @returns {Promise<number>} The port to talk to.
@@ -110,21 +160,36 @@ export const ensureServer = async () => {
     await rm(serverPath(), { force: true });
   }
 
+  // Exactly one process starts a daemon; the others wait for it to be recorded
+  // and share it.
+  if (!(await takeStartLock())) {
+    const shared = await awaitStartedDaemon();
+    if (shared !== null) return shared;
+    // The holder never produced one, so start it here after all: no daemon is
+    // worse than a second attempt.
+  }
+
   // findPort proves a port free by binding, then releases it, so a concurrent
   // starter can take it first. Retry rather than failing the command, and keep
   // findPort inside the try: under parallel starts every port can look busy for
   // an instant, and that must be retried too rather than escaping the loop.
   /** @type {unknown} */
   let lastErr;
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    try {
-      const port = await findPort(DEFAULT_PORT);
-      await spawnDaemon(port);
-      return port;
-    } catch (err) {
-      lastErr = err;
-      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+  try {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        const port = await findPort(DEFAULT_PORT);
+        await spawnDaemon(port);
+        return port;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+      }
     }
+  } finally {
+    // Released whether we succeeded or gave up, or the next invocation waits
+    // out the full staleness window for nothing.
+    await rm(lockPath(), { force: true });
   }
 
   throw lastErr;
