@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { activityState } from '../../src/server/public/activity.js';
+import { activityState, activityLabel } from '../../src/server/public/activity.js';
 
 /**
  * @typedef {import('../../src/types.js').Comment} Comment
@@ -92,4 +92,28 @@ test('an active lease combines with working: the agent has it and is still conne
 test('a lease expiring at exactly now is not polling', () => {
   const state = activityState({ comments: [], lease: { holder: 1, expiresAt: new Date(NOW).toISOString() } }, NOW);
   assert.equal(state.polling, false);
+});
+
+test('waiting with a lease is the agent listening', () => {
+  assert.equal(activityLabel({ delivery: 'waiting', polling: true }), 'agent listening');
+});
+
+test('waiting with no lease is waiting for the agent', () => {
+  assert.equal(activityLabel({ delivery: 'waiting', polling: false }), 'waiting for agent');
+});
+
+test('working with a lease is the agent working', () => {
+  assert.equal(activityLabel({ delivery: 'working', polling: true }), 'agent working');
+});
+
+test('working with no lease is the agent having it', () => {
+  assert.equal(activityLabel({ delivery: 'working', polling: false }), 'agent has it');
+});
+
+test('idle with a lease is the agent connected', () => {
+  assert.equal(activityLabel({ delivery: 'idle', polling: true }), 'agent connected');
+});
+
+test('idle with no lease has nothing to say', () => {
+  assert.equal(activityLabel({ delivery: 'idle', polling: false }), '');
 });
