@@ -13,34 +13,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # Maintains a release PR that bumps package.json and writes CHANGELOG.md.
-      # Merging it opens a draft release, which the step below tags; publishing
-      # that draft is what triggers publish.yml.
+      # Merging that PR is the release: this publishes the GitHub release, which
+      # fires publish.yml, which puts the package on npm. Merging is the gate,
+      # and nothing after it needs a human.
+      #
+      # Releases are deliberately not drafts. release-please decides the last
+      # released version from published releases, so a pending draft made it
+      # regenerate every changelog from the start of history: three release PRs
+      # proposed the whole repository, including the original scaffold commit.
       - uses: googleapis/release-please-action@v4
         id: release
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-      # GitHub creates no tag until a draft release is published, and
-      # release-please anchors the next changelog on the previous version's tag.
-      # That left a window, however long it took someone to press Publish, where
-      # the manifest named a version with no tag behind it: any run inside it
-      # found no anchor and regenerated the whole history, so the release PR
-      # proposed every commit ever made. Creating the tag here closes the window.
-      # Publishing the draft later is unaffected, GitHub just publishes against
-      # a tag that already exists.
-      - name: tag the draft release so the next changelog has an anchor
+      # The release above is created with GITHUB_TOKEN, and GitHub starts no
+      # workflow for events from that token, so publish.yml would never see it.
+      # workflow_dispatch is the documented exception and always triggers, which
+      # is why the publish is dispatched rather than waited for. The tag goes with
+      # it so the version guard still runs on this path.
+      - name: publish the release just created
         if: ${{ steps.release.outputs.release_created }}
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.release.outputs.tag_name }}
-          SHA: ${{ steps.release.outputs.sha }}
         run: |
-          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>&1; then
-            echo "$TAG already exists, nothing to do"
-            exit 0
-          fi
-          gh api "repos/$GITHUB_REPOSITORY/git/refs" --method POST \
-            --raw-field "ref=refs/tags/$TAG" \
-            --raw-field "sha=$SHA"
-          echo "created $TAG at $SHA"
+          gh workflow run publish.yml --ref main --field tag="$TAG"
+          echo "dispatched publish for $TAG"
+
