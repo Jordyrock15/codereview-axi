@@ -466,7 +466,24 @@ export const createApp = ({
       pattern: '/api/sessions/:key/send',
       handler: async (ctx) => {
         requireOpen(await guarded(ctx));
-        const sent = await mutateState((state) => markSent(state.sessions[ctx.params.key], now()));
+
+        // One round at a time, enforced here and not only in the browser. A
+        // batch sent mid-round is answered against code that has already moved,
+        // and it is how sixteen comments ended up in flight at once with no way
+        // to tell which round they belonged to.
+        //
+        // This cannot strand the human: the outstanding comments stay
+        // deliverable until a poll acks them, so whenever any agent next runs
+        // `cr wait` it collects them and the block lifts as it replies.
+        const sent = await mutateState((state) => {
+          const live = state.sessions[ctx.params.key];
+          const owed = live.comments.filter((comment) => comment.status === 'sent');
+          if (owed.length > 0) {
+            const which = owed.map((comment) => comment.id).join(', ');
+            throw new StateError(409, `the agent still owes a reply on ${owed.length === 1 ? 'comment' : 'comments'} ${which}; queue as much as you like, but a send waits for the round to finish`);
+          }
+          return markSent(live, now());
+        });
 
         if (sent.length > 0) {
           hub.publish(ctx.params.key, 'sent', { ids: sent.map((c) => c.id) });
