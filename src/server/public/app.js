@@ -8,13 +8,17 @@
 
 import { renderLine } from './highlight.js';
 import { pairLines } from './pair.js';
-import { activityState } from './activity.js';
+import { activityState, activityLabel } from './activity.js';
 import {
   overlayVisible, remainingVisibleMs, OVERLAY_SHOW_DELAY_MS, OVERLAY_MIN_VISIBLE_MS,
   OVERLAY_REFRESHED_SHOW_DELAY_MS, OVERLAY_REFRESHED_MIN_VISIBLE_MS,
 } from './overlay.js';
 import { queueEntries, groupEntries, GROUPS } from './queue.js';
 import { splitPathLabel } from './path-label.js';
+import { identLabel, viewToggleLabel, noteTitle } from './labels.js';
+import { countsView } from './counts.js';
+import { buildQuote } from './quote.js';
+import { nextPick, pickRange, inPickRange, draftKey } from './pick.js';
 
 const key = document.body.dataset.key;
 const token = new URLSearchParams(location.search).get('t') ?? '';
@@ -65,27 +69,15 @@ const el = (tag, className, text) => {
   return node;
 };
 
-/** @type {{file: string|null, side: 'old'|'new', start: number|null, end: number|null, hunk: string|null}} */
+/** @type {import('./pick.js').Pick} */
 const picking = { file: null, side: 'new', start: null, end: null, hunk: null };
 
-/**
- * In-progress composer text survives a re-render only if it is kept outside
- * the DOM the render wipes. Keyed by file, side and the range's start line,
- * not the end: a shift-extend changes `picking.end` without rebuilding the
- * composer, so keying on the end too would silently fork a single in-progress
- * draft into two map entries, the older of which `clearPick` would never
- * reach. A different pick (different file, side or start line) still gets
- * its own entry and never inherits someone else's draft.
- * @type {Map<string, {text: string, selStart: number, selEnd: number}>}
- */
+/** @type {Map<string, {text: string, selStart: number, selEnd: number}>} */
 const drafts = new Map();
-
-/** @returns {string} */
-const draftKey = () => `${picking.file}::${picking.side}::${picking.start}`;
 
 /** @returns {void} */
 const clearPick = () => {
-  if (picking.file !== null) drafts.delete(draftKey());
+  if (picking.file !== null) drafts.delete(draftKey(picking));
   picking.file = null;
   picking.start = null;
   picking.end = null;
@@ -108,9 +100,7 @@ const paintPick = () => {
     if (row.dataset.file !== picking.file) continue;
 
     const line = Number(row.dataset[picking.side === 'new' ? 'newLine' : 'oldLine'] || 0);
-    const inRange = picking.start !== null && line >= Math.min(picking.start, picking.end ?? picking.start)
-      && line <= Math.max(picking.start, picking.end ?? picking.start);
-    if (!inRange) continue;
+    if (!inPickRange(line, picking.side, picking)) continue;
 
     if (row.classList.contains('split')) {
       row.querySelector(`.t[data-side="${picking.side}"]`)?.classList.add('picked');
@@ -122,36 +112,21 @@ const paintPick = () => {
 
 /** @returns {void} */
 const counts = () => {
-  const comments = view.session?.comments ?? [];
-  const unsent = comments.filter((c) => c.status === 'open').length;
-  const answered = comments.filter((c) => c.status === 'answered').length;
-  const stale = comments.filter((c) => c.status === 'stale').length;
-
-  const resolved = comments.filter((c) => c.status === 'resolved').length;
+  const shown = countsView(view.session?.comments ?? []);
 
   // unsent and answered are the Queued and Answered buttons' own numbers, so
   // only stale is left to report as text, and only when there is any.
-  $('counts-unsent').textContent = stale === 0 ? '' : `${stale} stale`;
+  $('counts-unsent').textContent = shown.staleLabel;
   $('counts-rest').textContent = '';
-  $('queue-open').textContent = `Queued ${unsent}`;
-  $('answered-open').textContent = `Answered ${answered}`;
-  $('resolved-open').textContent = `Resolved ${resolved}`;
-  // One round at a time. A batch sent while the agent still owes replies on the
-  // last one arrives mid-edit and gets answered against code that has already
-  // moved, and it was how sixteen comments ended up in flight at once with no
-  // way to tell which round they belonged to. Queue as much as you like; the
-  // send waits.
-  const awaitingAgent = comments.filter((c) => c.status === 'sent').length;
-  const blocked = awaitingAgent > 0;
-  const why = blocked
-    ? `The agent still owes ${awaitingAgent === 1 ? 'a reply' : `${awaitingAgent} replies`}. Your drafts stay queued until it has answered.`
-    : '';
+  $('queue-open').textContent = `Queued ${shown.unsent}`;
+  $('answered-open').textContent = `Answered ${shown.answered}`;
+  $('resolved-open').textContent = `Resolved ${shown.resolved}`;
 
   for (const id of ['send', 'queue-send']) {
     const button = /** @type {HTMLButtonElement} */ ($(id));
-    button.disabled = unsent === 0 || blocked;
-    button.textContent = unsent === 0 ? 'Send' : `Send ${unsent}`;
-    button.title = why;
+    button.disabled = shown.sendDisabled;
+    button.textContent = shown.sendLabel;
+    button.title = shown.sendTitle;
   }
 };
 
@@ -354,12 +329,7 @@ const scrollToComment = (id) => {
   target?.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'center' });
 };
 
-/**
- * `delivery` and `polling` are independent, not ranked: a lease can be held
- * during any delivery state, most usefully during `waiting`, so this maps
- * the pair to one label rather than picking a single "most urgent" state.
- * @returns {void}
- */
+/** @returns {void} */
 const renderActivity = () => {
   const node = $('activity');
   if (!view.session) { node.replaceChildren(); return; }
@@ -368,12 +338,7 @@ const renderActivity = () => {
   node.dataset.delivery = state.delivery;
   node.dataset.polling = String(state.polling);
 
-  const label = state.delivery === 'waiting'
-    ? (state.polling ? 'agent listening' : 'waiting for agent')
-    : state.delivery === 'working'
-      ? (state.polling ? 'agent working' : 'agent has it')
-      : (state.polling ? 'agent connected' : '');
-
+  const label = activityLabel(state);
   node.replaceChildren();
   if (label) node.append(el('span', 'dot'), el('span', 'label', label));
 };
@@ -423,34 +388,20 @@ const textOf = (row, side) => row.querySelector(`.t[data-side="${side}"]`)?.text
   ?? row.querySelector('.t')?.textContent ?? '';
 
 /**
- * The rows are what the human saw and chose. Reading the quote from them rather
- * than from file.hunks is what makes expanded context and hunk edges correct.
- *
- * Contiguity is judged by hunk membership, not by adjacency within the row
- * list: a deleted line has no new-side number and so is skipped when building
- * a new-side quote, but that skip does not break contiguity, the deleted text
- * is genuinely absent from the new file. What does break it is a range that
- * reaches into a different hunk, since the lines omitted between two hunks
- * are real, unselected lines the quote would otherwise silently drop.
+ * Reads the picked rows out of the DOM and hands them to `buildQuote`.
  * @param {'old'|'new'} side
  * @param {number} from
  * @param {number} to
- * @returns {{quote: string, contiguous: boolean, rowCount: number}}
+ * @returns {import('./quote.js').QuoteResult}
  */
 const quoteFromRows = (side, from, to) => {
-  const rows = selectionRows($('diff'));
   const key = side === 'new' ? 'newLine' : 'oldLine';
-
-  /** @type {number[]} */
-  const chosen = [];
-  for (let i = 0; i < rows.length; i += 1) {
-    const n = Number(rows[i].dataset[key] || 0);
-    if (Number.isInteger(n) && n >= from && n <= to) chosen.push(i);
-  }
-
-  const contiguous = chosen.length > 0 && chosen.every((index) => rows[index].dataset.hunk === rows[chosen[0]].dataset.hunk);
-  const quote = chosen.map((i) => textOf(rows[i], side)).join('\n');
-  return { quote, contiguous, rowCount: chosen.length };
+  const rows = selectionRows($('diff')).map((row) => ({
+    line: Number(row.dataset[key] || 0),
+    hunk: row.dataset.hunk ?? '',
+    text: textOf(row, side),
+  }));
+  return buildQuote(rows, from, to);
 };
 
 /**
@@ -463,8 +414,7 @@ const openComposer = (file, afterRow) => {
 
   const box = el('div', 'thread composer');
   box.dataset.side = picking.side;
-  const from = Math.min(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
-  const to = Math.max(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
+  const { from, to } = pickRange(picking);
   const heading = el('div', 'who');
   fillComposerHeading(heading, file.path, from, to);
   box.append(heading);
@@ -473,11 +423,11 @@ const openComposer = (file, afterRow) => {
   text.placeholder = 'What is wrong, and what should change';
   box.append(text);
 
-  const draft = drafts.get(draftKey());
+  const draft = drafts.get(draftKey(picking));
   if (draft) text.value = draft.text;
 
   text.addEventListener('input', () => {
-    drafts.set(draftKey(), { text: text.value, selStart: text.selectionStart, selEnd: text.selectionEnd });
+    drafts.set(draftKey(picking), { text: text.value, selStart: text.selectionStart, selEnd: text.selectionEnd });
   });
 
   let verdict = 'fix';
@@ -503,10 +453,9 @@ const openComposer = (file, afterRow) => {
   save.addEventListener('click', async () => {
     if (text.value.trim() === '') { text.focus(); return; }
 
-    // Read live: a shift-extend since the composer opened only moves
-    // picking.end, it does not rebuild this handler's closure.
-    const start = Math.min(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
-    const end = Math.max(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
+    // Read live: a shift-extend since the composer opened only moves the
+    // range's end, it does not rebuild this handler's closure.
+    const { from: start, to: end } = pickRange(picking);
     const { quote, contiguous, rowCount } = quoteFromRows(picking.side, start, end);
 
     // A blank quote is not itself an error, a genuinely blank line is a
@@ -563,8 +512,7 @@ const openComposer = (file, afterRow) => {
  * @returns {void}
  */
 const updateComposerHeader = (box, file) => {
-  const from = Math.min(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
-  const to = Math.max(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
+  const { from, to } = pickRange(picking);
   const who = box.querySelector('.who');
   if (who) fillComposerHeading(/** @type {HTMLElement} */ (who), file.path, from, to);
 
@@ -733,36 +681,19 @@ const pickHandler = (file, row, side, lineNo) => (event) => {
   const line = Number(lineNo);
   if (!Number.isInteger(line) || line === 0) return;
 
-  // The side must match too: the old and new gutters are adjacent columns, so
-  // extending across them would build a quote for code the human never chose.
-  // The hunk must match as well: crossing into another hunk starts a fresh
-  // selection rather than silently splicing out the unchanged gap between them.
-  const sameHunk = row.dataset.hunk === picking.hunk;
-  const sameSelection = picking.start !== null && picking.file === file.path;
-  const shiftExtend = event.shiftKey && sameSelection && side === picking.side && sameHunk;
-
-  // A shift-click only counts as a rejection if there was a selection to
-  // extend in the first place: a plain click, or the very first shift-click
-  // with nothing picked yet, is not a rejection and must stay silent.
-  const rejected = event.shiftKey && sameSelection && !shiftExtend;
-
-  if (shiftExtend) {
-    picking.end = line;
-  } else {
-    picking.file = file.path;
-    picking.side = side;
-    picking.start = line;
-    picking.end = line;
-    picking.hunk = row.dataset.hunk ?? null;
-  }
+  const outcome = nextPick(picking, {
+    file: file.path, side, line, hunk: row.dataset.hunk ?? null, shiftKey: event.shiftKey,
+  });
+  // picking is read live by handler closures, so its identity must survive.
+  Object.assign(picking, outcome.pick);
   paintPick();
 
   const existingComposer = /** @type {HTMLElement|null} */ (document.querySelector('.thread.composer'));
-  if (shiftExtend && existingComposer) {
+  if (outcome.shiftExtend && existingComposer) {
     updateComposerHeader(existingComposer, file);
   } else {
     openComposer(file, row);
-    if (rejected) {
+    if (outcome.rejected) {
       const warn = document.querySelector('.thread.composer .warn');
       if (warn) warn.textContent = HUNK_BOUNDARY_MSG;
     }
@@ -1072,23 +1003,12 @@ const load = async () => {
   const session = await res.json();
   view.session = session;
   view.current ??= session.snapshot.files[0]?.path ?? null;
-  // A short, stable label, kept apart from the message. --say rewrites the
-  // note every round, so using it as the header made the title as long as
-  // whatever the agent last said.
-  const ident = session.pr
-    ? `PR #${session.pr} → ${session.base}`
-    : session.branch
-      ? `${session.branch}${session.base ? ` → ${session.base}` : ''}`
-      : session.base
-        ? `→ ${session.base}`
-        : 'working tree';
+  const ident = identLabel(session);
   const said = session.note || '';
   $('ident').textContent = ident;
   $('say').textContent = said;
-  $('note').title = said ? `${ident}: ${said}` : ident;
-  // The label names what clicking will switch to, read from the session so two
-  // tabs cannot disagree, never from local state.
-  $('view').textContent = session.view === 'split' ? 'unified' : 'split';
+  $('note').title = noteTitle(ident, said);
+  $('view').textContent = viewToggleLabel(session);
   renderFiles();
   renderDiff();
   counts();

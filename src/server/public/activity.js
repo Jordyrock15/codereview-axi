@@ -31,3 +31,16 @@ export const activityState = (session, now = Date.now()) => {
 
   return { delivery, polling };
 };
+
+/**
+ * `delivery` and `polling` are independent, not ranked: a lease can be held
+ * during any delivery state, most usefully during `waiting`, so this maps the
+ * pair to one label rather than picking a single "most urgent" state.
+ * @param {ActivityState} state
+ * @returns {string}
+ */
+export const activityLabel = (state) => {
+  if (state.delivery === 'waiting') return state.polling ? 'agent listening' : 'waiting for agent';
+  if (state.delivery === 'working') return state.polling ? 'agent working' : 'agent has it';
+  return state.polling ? 'agent connected' : '';
+};
