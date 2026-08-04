@@ -39,8 +39,7 @@
     },
     {
       "type": "refactor",
-      "section": "Code Refactoring",
-      "hidden": true
+      "section": "Code Refactoring"
     },
     {
       "type": "test",

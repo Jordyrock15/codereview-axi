@@ -8,7 +8,7 @@
     "cr": "bin/cr.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19.0"
   },
   "files": [
     "bin",
@@ -18,7 +18,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test",
+    "test": "node --test --test-timeout=60000",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm test",
     "prepublishOnly": "npm run check"
@@ -40,7 +40,9 @@
     "cli"
   ],
   "devDependencies": {
-    "typescript": "^5.6.0",
-    "@types/node": "^20.0.0"
+    "@types/jsdom": "^28.0.3",
+    "@types/node": "^20.0.0",
+    "jsdom": "^29.1.1",
+    "typescript": "^5.6.0"
   }
 }
