@@ -6,11 +6,20 @@ import path from 'node:path';
 import http from 'node:http';
 import { once } from 'node:events';
 
+/** A port of this test's own, so parallel files do not collide on the fixed one. */
+const freePort = async () => {
+  const { findPort } = await import('../../src/server/index.js');
+  return findPort(45000 + Math.floor(Math.random() * 3000));
+};
+
 /** @param {import('node:test').TestContext} t */
 const withHome = async (t) => {
   const home = await mkdtemp(path.join(tmpdir(), 'cr-home-'));
   process.env.CODEREVIEW_AXI_HOME = home;
-  t.after(() => { delete process.env.CODEREVIEW_AXI_HOME; });
+  // cr uses one fixed port, which is what stops a second daemon existing. Tests
+  // run in parallel, so each needs its own or they fight over it.
+  process.env.CODEREVIEW_AXI_PORT = String(await freePort());
+  t.after(() => { delete process.env.CODEREVIEW_AXI_HOME; delete process.env.CODEREVIEW_AXI_PORT; });
   return home;
 };
 
@@ -47,15 +56,19 @@ test('ensureServer spawns a server when none is recorded', async (t) => {
   assert.equal((await probe(port)).ok, true);
 });
 
-test('ensureServer reuses a live server at the recorded version', async (t) => {
+test('ensureServer reuses a live server on the configured port', async (t) => {
   await withHome(t);
-  const { startServer } = await import('../../src/server/index.js');
+  const { startServer, configuredPort } = await import('../../src/server/index.js');
   const { ensureServer } = await import('../../src/cli/client.js');
 
-  const server = await startServer({ port: 45421 });
+  // Discovery is a health check on the one port, not a lookup in server.json.
+  // That file can be lost while a daemon lives, which is how a machine ended up
+  // with eight of them; a port cannot be lost while something is listening on it.
+  const port = configuredPort();
+  const server = await startServer({ port });
   t.after(server.close);
 
-  assert.equal(await ensureServer(), 45421);
+  assert.equal(await ensureServer(), port);
 });
 
 test('ensureServer replaces a server running an older version', async (t) => {

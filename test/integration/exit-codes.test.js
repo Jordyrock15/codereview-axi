@@ -30,7 +30,11 @@ const runIn = async (cwd, args, env) => {
 
 const home = async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'cr-home-'));
-  return { ...process.env, CODEREVIEW_AXI_HOME: dir };
+  const { findPort } = await import('../../src/server/index.js');
+  // A port of this file's own: cr uses one fixed port by design, so parallel
+  // tests must not share it.
+  const port = await findPort(45000 + Math.floor(Math.random() * 3000));
+  return { ...process.env, CODEREVIEW_AXI_HOME: dir, CODEREVIEW_AXI_PORT: String(port) };
 };
 
 /**
@@ -135,7 +139,7 @@ test('open prints TOON by default through the real bin/cr.js, not just through c
   assert.equal(result.out.trimStart().startsWith('{'), false, 'not JSON');
 });
 
-test('open self-heals when server.json points at a dead port', async (t) => {
+test('open ignores a stale server.json, since discovery is the port not the file', async (t) => {
   const repo = await makeRepo({ 'a.js': 'one\n' });
   /** @type {NodeJS.ProcessEnv} */
   let env;
@@ -148,11 +152,11 @@ test('open self-heals when server.json points at a dead port', async (t) => {
   await mkdir(stateDir, { recursive: true });
   await writeFile(path.join(stateDir, 'server.json'), JSON.stringify({ pid: 999999, port: 1, version: '0.0.0' }));
 
-  // ensureServer's real behaviour, confirmed by direct inspection of
-  // src/cli/client.js, is unconditional self-healing: probe(1) fails fast,
-  // the stale server.json is removed, and findPort(DEFAULT_PORT) hands back
-  // a genuinely free port. This test exercises exactly that path, and only
-  // that path; it is not a test of the server-unreachable slug.
+  // server.json is written for the record but no longer read to find a daemon,
+  // so nonsense in it cannot mislead anyone: ensureServer health-checks the one
+  // configured port and starts a daemon there if nothing answers. This used to
+  // be a self-healing path through findPort, and the file being authoritative is
+  // what let a machine collect eight daemons, one per open.
   const result = await runIn(repo.dir, ['open'], env);
   assert.equal(result.code, 0, `expected self-healing recovery, got ${result.code}: ${result.out}`);
 });

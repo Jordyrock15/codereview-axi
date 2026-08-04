@@ -3,7 +3,7 @@ import { readFile, rm, writeFile, stat, mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 import { serverPath } from '../paths.js';
-import { readServerFile, findPort, DEFAULT_PORT } from '../server/index.js';
+import { readServerFile, configuredPort, isFree } from '../server/index.js';
 
 const pkg = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
 
@@ -94,105 +94,96 @@ const spawnDaemon = async (port) => {
   throw new CliError(1, `no server came up on port ${port}`, 'server-unreachable');
 };
 
-/** How long a start lock may sit before it is treated as abandoned. */
-const START_LOCK_MS = 5000;
-const lockPath = () => `${serverPath()}.lock`;
-
 /**
- * Claims the exclusive right to start a daemon. Without this, two `cr` processes
- * beginning while no daemon is recorded each start one, and since the daemon
- * writes server.json itself the last write wins and the loser is left listening
- * forever with nothing referencing it. That is how a port range fills with
- * strays: eight were found on one machine, one per open.
- * @returns {Promise<boolean>} Whether this process may start a daemon.
+ * @param {number} port
+ * @param {number} withinMs
+ * @returns {Promise<boolean>}
  */
-const takeStartLock = async () => {
-  await mkdir(dirname(lockPath()), { recursive: true, mode: 0o700 });
-  try {
-    await writeFile(lockPath(), `${process.pid}\n`, { flag: 'wx', mode: 0o600 });
-    return true;
-  } catch {
-    // A starter that died holding the lock must not wedge every later
-    // invocation, so an old one is taken rather than waited on.
-    try {
-      if (Date.now() - (await stat(lockPath())).mtimeMs > START_LOCK_MS) {
-        await rm(lockPath(), { force: true });
-        return await takeStartLock();
-      }
-    } catch {
-      // It vanished under us, which means the winner finished: fall through.
-    }
-    return false;
-  }
-};
-
-/**
- * Waits for whoever holds the start lock to record a usable daemon.
- * @returns {Promise<number|null>} The port, or null if none appeared in time.
- */
-const awaitStartedDaemon = async () => {
-  const deadline = Date.now() + START_LOCK_MS + 1000;
+const waitForPortFree = async (port, withinMs) => {
+  const deadline = Date.now() + withinMs;
   while (Date.now() < deadline) {
+    if (await isFree(port)) return true;
     await new Promise((resolve) => setTimeout(resolve, 100));
-    const recorded = await readServerFile();
-    if (recorded) {
-      const live = await probe(recorded.port);
-      if (live.ok && live.version === pkg.version) return recorded.port;
-    }
   }
-  return null;
+  return await isFree(port);
 };
+
+/**
+ * The pid listening on a port, when it is one of ours. Checked against the
+ * command line as well as the port, so nothing else is ever signalled.
+ * @param {number} port
+ * @returns {Promise<number|null>}
+ */
+const crDaemonOnPort = (port) => new Promise((resolve) => {
+  const lsof = spawn('lsof', ['-t', `-iTCP:${port}`, '-sTCP:LISTEN'], { stdio: ['ignore', 'pipe', 'ignore'] });
+  let out = '';
+  lsof.stdout.on('data', (chunk) => { out += chunk; });
+  lsof.once('error', () => resolve(null));
+  lsof.once('close', () => {
+    const pid = out.split('\n').map((line) => Number(line.trim())).find((n) => Number.isInteger(n) && n > 0);
+    if (pid === undefined) { resolve(null); return; }
+
+    const ps = spawn('ps', ['-p', String(pid), '-o', 'command='], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let cmd = '';
+    ps.stdout.on('data', (chunk) => { cmd += chunk; });
+    ps.once('error', () => resolve(null));
+    ps.once('close', () => resolve(/codereview-axi|src\/server\/daemon\.js/.test(cmd) ? pid : null));
+  });
+});
 
 /**
  * Discovers or starts the server, replacing one that predates this CLI.
  * @returns {Promise<number>} The port to talk to.
  */
 export const ensureServer = async () => {
-  const recorded = await readServerFile();
+  const port = configuredPort();
+  const live = await probe(port);
 
-  if (recorded) {
-    const live = await probe(recorded.port);
-    if (live.ok && live.version === pkg.version) return recorded.port;
-    if (live.ok) {
-      await shutdown(recorded.port, live.pid ?? recorded.pid);
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    }
-    await rm(serverPath(), { force: true });
-  }
+  if (live.ok && live.version === pkg.version) return port;
 
-  // Exactly one process starts a daemon; the others wait for it to be recorded
-  // and share it.
-  if (!(await takeStartLock())) {
-    const shared = await awaitStartedDaemon();
-    if (shared !== null) return shared;
-    // The holder never produced one, so start it here after all: no daemon is
-    // worse than a second attempt.
-  }
-
-  // findPort proves a port free by binding, then releases it, so a concurrent
-  // starter can take it first. Retry rather than failing the command, and keep
-  // findPort inside the try: under parallel starts every port can look busy for
-  // an instant, and that must be retried too rather than escaping the loop.
-  /** @type {unknown} */
-  let lastErr;
-  try {
-    for (let attempt = 0; attempt < 5; attempt += 1) {
+  if (live.ok) {
+    // Ours, but a different version. Ask, then insist: a daemon that ignores
+    // the request would otherwise hold the port and every command with it.
+    await shutdown(port, live.pid ?? 0);
+    if (!(await waitForPortFree(port, 2000)) && live.pid !== undefined) {
       try {
-        const port = await findPort(DEFAULT_PORT);
-        await spawnDaemon(port);
-        return port;
-      } catch (err) {
-        lastErr = err;
-        await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+        process.kill(live.pid, 'SIGTERM');
+      } catch {
+        // Already gone, which is the outcome we wanted.
       }
+      await waitForPortFree(port, 3000);
     }
-  } finally {
-    // Released whether we succeeded or gave up, or the next invocation waits
-    // out the full staleness window for nothing.
-    await rm(lockPath(), { force: true });
+  } else if (!(await isFree(port))) {
+    // Something holds the port without answering our health check: a wedged
+    // daemon of ours, or a stranger. Only ever signal our own, and say plainly
+    // what to do about anything else rather than drifting to another port,
+    // since silent drift is how a range fills with daemons nobody notices.
+    const ours = await crDaemonOnPort(port);
+    if (ours === null) {
+      throw new CliError(1, `port ${port} is held by something that is not cr; free it or set CODEREVIEW_AXI_PORT`, 'state');
+    }
+    try {
+      process.kill(ours, 'SIGTERM');
+    } catch {
+      // Raced with its own exit.
+    }
+    if (!(await waitForPortFree(port, 3000))) {
+      throw new CliError(1, `a wedged cr daemon still holds port ${port}; kill pid ${ours} or set CODEREVIEW_AXI_PORT`, 'state');
+    }
   }
 
-  throw lastErr;
+  // The port is the mutex from here: concurrent starters all aim at it, the OS
+  // lets one listen, and the losers find the winner through health below.
+  await spawnDaemon(port).catch(() => {});
+
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const health = await probe(port);
+    if (health.ok && health.version === pkg.version) return port;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  throw new CliError(1, `the cr server did not come up on port ${port}`, 'server-unreachable');
 };
 
 /**

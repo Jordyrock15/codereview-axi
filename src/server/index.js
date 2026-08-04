@@ -28,7 +28,25 @@ const version = async () => {
  * @param {number} port
  * @returns {Promise<boolean>}
  */
-const isFree = (port) => new Promise((resolve) => {
+/**
+ * The one port cr uses. Fixed rather than searched: the port is what makes a
+ * second daemon impossible, since the OS lets exactly one process listen on it.
+ * Walking a range and recording the winner in a file gave two ways to end up
+ * with strays, because the record can be lost and two starters can pick
+ * different ports.
+ * @returns {number}
+ */
+export const configuredPort = () => {
+  const raw = process.env.CODEREVIEW_AXI_PORT;
+  const parsed = Number(raw);
+  return raw !== undefined && Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_PORT;
+};
+
+/**
+ * @param {number} port
+ * @returns {Promise<boolean>}
+ */
+export const isFree = (port) => new Promise((resolve) => {
   const probe = net.createServer();
   probe.once('error', () => resolve(false));
   probe.once('listening', () => probe.close(() => resolve(true)));

@@ -3,6 +3,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { makeRepo } from './repo.js';
 
+/** A port of this test's own, so parallel files do not collide on the fixed one. */
+const freePort = async () => {
+  const { findPort } = await import('../../src/server/index.js');
+  return findPort(45000 + Math.floor(Math.random() * 3000));
+};
+
 /**
  * Opens a session in a fresh repo with a working-tree edit, then posts each
  * comment straight to the server so its status stays whatever the caller
@@ -14,6 +20,9 @@ import { makeRepo } from './repo.js';
 export const openSessionWithComments = async (t, comments) => {
   const home = await mkdtemp(path.join(tmpdir(), 'cr-home-'));
   process.env.CODEREVIEW_AXI_HOME = home;
+  // cr uses one fixed port, which is what stops a second daemon existing. Tests
+  // run in parallel, so each needs its own or they fight over it.
+  process.env.CODEREVIEW_AXI_PORT = String(await freePort());
 
   const { readServerFile } = await import('../../src/server/index.js');
   const { shutdown } = await import('../../src/cli/client.js');
@@ -21,7 +30,7 @@ export const openSessionWithComments = async (t, comments) => {
     const info = await readServerFile();
     if (info) await shutdown(info.port, info.pid).catch(() => {});
   });
-  t.after(() => { delete process.env.CODEREVIEW_AXI_HOME; });
+  t.after(() => { delete process.env.CODEREVIEW_AXI_HOME; delete process.env.CODEREVIEW_AXI_PORT; });
 
   const { run } = await import('../../src/cli/commands.js');
   const { request } = await import('../../src/cli/client.js');

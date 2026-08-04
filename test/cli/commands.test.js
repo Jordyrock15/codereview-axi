@@ -7,6 +7,12 @@ import { makeRepo } from '../helpers/repo.js';
 import { openSessionWithComments } from '../helpers/session.js';
 import { USAGE, run, ERROR_SLUGS } from '../../src/cli/commands.js';
 
+/** A port of this test's own, so parallel files do not collide on the fixed one. */
+const freePort = async () => {
+  const { findPort } = await import('../../src/server/index.js');
+  return findPort(45000 + Math.floor(Math.random() * 3000));
+};
+
 /**
  * Redirects CODEREVIEW_AXI_HOME to a throwaway directory for the test's
  * duration and kills any daemon it spawns, so `ensureServer` never touches
@@ -19,6 +25,9 @@ import { USAGE, run, ERROR_SLUGS } from '../../src/cli/commands.js';
 const isolateHome = async (t) => {
   const home = await mkdtemp(path.join(tmpdir(), 'cr-home-'));
   process.env.CODEREVIEW_AXI_HOME = home;
+  // cr uses one fixed port, which is what stops a second daemon existing. Tests
+  // run in parallel, so each needs its own or they fight over it.
+  process.env.CODEREVIEW_AXI_PORT = String(await freePort());
 
   const { readServerFile } = await import('../../src/server/index.js');
   const { shutdown } = await import('../../src/cli/client.js');
@@ -30,7 +39,7 @@ const isolateHome = async (t) => {
     if (info) await shutdown(info.port, info.pid).catch(() => {});
   });
 
-  t.after(() => { delete process.env.CODEREVIEW_AXI_HOME; });
+  t.after(() => { delete process.env.CODEREVIEW_AXI_HOME; delete process.env.CODEREVIEW_AXI_PORT; });
 };
 
 /** @param {import('node:test').TestContext} t */
