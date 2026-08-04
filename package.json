@@ -1,6 +1,6 @@
 {
   "name": "codereview-axi",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Local browser review session over a git diff, the working diff, a branch's base, or a pull request, annotations fed back to your coding agent",
   "type": "module",
   "bin": {
