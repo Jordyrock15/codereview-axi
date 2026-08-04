@@ -136,12 +136,23 @@ const counts = () => {
   $('queue-open').textContent = `Queued ${unsent}`;
   $('answered-open').textContent = `Answered ${answered}`;
   $('resolved-open').textContent = `Resolved ${resolved}`;
-  const send = /** @type {HTMLButtonElement} */ ($('send'));
-  send.disabled = unsent === 0;
-  send.textContent = unsent === 0 ? 'Send' : `Send ${unsent}`;
-  const queueSend = /** @type {HTMLButtonElement} */ ($('queue-send'));
-  queueSend.disabled = unsent === 0;
-  queueSend.textContent = unsent === 0 ? 'Send' : `Send ${unsent}`;
+  // One round at a time. A batch sent while the agent still owes replies on the
+  // last one arrives mid-edit and gets answered against code that has already
+  // moved, and it was how sixteen comments ended up in flight at once with no
+  // way to tell which round they belonged to. Queue as much as you like; the
+  // send waits.
+  const awaitingAgent = comments.filter((c) => c.status === 'sent').length;
+  const blocked = awaitingAgent > 0;
+  const why = blocked
+    ? `The agent still owes ${awaitingAgent === 1 ? 'a reply' : `${awaitingAgent} replies`}. Your drafts stay queued until it has answered.`
+    : '';
+
+  for (const id of ['send', 'queue-send']) {
+    const button = /** @type {HTMLButtonElement} */ ($(id));
+    button.disabled = unsent === 0 || blocked;
+    button.textContent = unsent === 0 ? 'Send' : `Send ${unsent}`;
+    button.title = why;
+  }
 };
 
 /**
@@ -204,8 +215,17 @@ const queueEntryEl = (entry, removable) => {
 
   const open = /** @type {HTMLButtonElement} */ (el('button', 'queue-entry-open'));
   open.type = 'button';
+  // Split rather than dropped in whole: a deep path is one unbreakable string,
+  // so it forced every row wider than the 360px panel and pushed the bodies out
+  // of sight. The directory ellipsises; the file and line survive.
+  const loc = el('span', 'queue-entry-loc');
+  const { dir, base } = splitPathLabel(entry.location);
+  if (dir) loc.append(el('span', 'dir', dir));
+  loc.append(el('span', 'base', base));
+  loc.title = entry.location;
+
   open.append(
-    el('span', 'queue-entry-loc', entry.location),
+    loc,
     el('span', 'queue-entry-verdict', entry.verdict),
     el('span', 'queue-entry-body', entry.body),
   );
@@ -349,7 +369,7 @@ const renderActivity = () => {
   node.dataset.polling = String(state.polling);
 
   const label = state.delivery === 'waiting'
-    ? (state.polling ? 'agent connecting' : 'waiting for agent')
+    ? (state.polling ? 'agent listening' : 'waiting for agent')
     : state.delivery === 'working'
       ? (state.polling ? 'agent working' : 'agent has it')
       : (state.polling ? 'agent connected' : '');

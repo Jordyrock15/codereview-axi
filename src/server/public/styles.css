@@ -432,6 +432,8 @@ main {
   display: flex;
   align-items: flex-start;
   gap: 6px;
+  /* Without this a row can outgrow the panel instead of its contents shrinking. */
+  min-width: 0;
   border: 1px solid var(--hair);
   border-radius: var(--radius-md);
   background: var(--paper);
@@ -452,7 +454,9 @@ main {
 
 /* No uppercase here: this is a file path, not a label, and paths are
    case-sensitive. Upper-casing it showed `x.js` as `X.JS`. */
-.queue-entry-loc { color: var(--mid); font-size: 11px; letter-spacing: 0.06em; }
+.queue-entry-loc { color: var(--mid); font-size: 11px; letter-spacing: 0.06em; display: flex; min-width: 0; }
+.queue-entry-loc .dir { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.queue-entry-loc .base { white-space: nowrap; flex-shrink: 0; }
 .queue-entry-verdict { color: var(--accent); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
 
 /* Clamped, not truncated with an ellipsis alone: a couple of lines of real
