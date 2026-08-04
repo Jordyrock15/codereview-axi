@@ -4,6 +4,12 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+/** A port of this test's own, so parallel files do not collide on the fixed one. */
+const freePort = async () => {
+  const { findPort } = await import('../../src/server/index.js');
+  return findPort(45000 + Math.floor(Math.random() * 3000));
+};
+
 /**
  * Boots the app on an ephemeral port with an isolated state home.
  * @param {import('node:test').TestContext} t
@@ -12,7 +18,10 @@ import path from 'node:path';
 export const startApp = async (t, options = {}) => {
   const home = await mkdtemp(path.join(tmpdir(), 'cr-home-'));
   process.env.CODEREVIEW_AXI_HOME = home;
-  t.after(() => { delete process.env.CODEREVIEW_AXI_HOME; });
+  // cr uses one fixed port, which is what stops a second daemon existing. Tests
+  // run in parallel, so each needs its own or they fight over it.
+  process.env.CODEREVIEW_AXI_PORT = String(await freePort());
+  t.after(() => { delete process.env.CODEREVIEW_AXI_HOME; delete process.env.CODEREVIEW_AXI_PORT; });
 
   const { createApp } = await import('../../src/server/app.js');
 

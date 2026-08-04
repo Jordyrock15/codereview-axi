@@ -6,11 +6,20 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+/** A port of this test's own, so parallel files do not collide on the fixed one. */
+const freePort = async () => {
+  const { findPort } = await import('../../src/server/index.js');
+  return findPort(45000 + Math.floor(Math.random() * 3000));
+};
+
 /** @param {import('node:test').TestContext} t */
 const withHome = async (t) => {
   const home = await mkdtemp(path.join(tmpdir(), 'cr-home-'));
   process.env.CODEREVIEW_AXI_HOME = home;
-  t.after(() => { delete process.env.CODEREVIEW_AXI_HOME; });
+  // cr uses one fixed port, which is what stops a second daemon existing. Tests
+  // run in parallel, so each needs its own or they fight over it.
+  process.env.CODEREVIEW_AXI_PORT = String(await freePort());
+  t.after(() => { delete process.env.CODEREVIEW_AXI_HOME; delete process.env.CODEREVIEW_AXI_PORT; });
   return home;
 };
 
@@ -183,29 +192,28 @@ test('close finishes even while a client holds a connection open', async (t) => 
   await assert.rejects(fetch('http://127.0.0.1:45322/api/health'), 'the port must be free afterwards');
 });
 
-test('concurrent ensureServer calls start one daemon, not one each', async (t) => {
-  const home = await withHome(t);
+test('concurrent ensureServer calls all land on the one daemon', async (t) => {
+  await withHome(t);
   const { ensureServer, shutdown, probe } = await import('../../src/cli/client.js');
 
-  // The daemon writes server.json itself, so before the start lock existed each
-  // concurrent caller started its own and the last write won. The losers kept
-  // listening with nothing referencing them: eight strays were found on one
-  // machine, one per open.
+  // The port is the mutex: every caller aims at the same one, the OS lets a
+  // single process listen, and the rest find it by health check. Before that,
+  // callers walked a port range and recorded the winner in a file, so
+  // concurrent starts each got their own daemon and the losers were orphaned.
   const ports = await Promise.all([ensureServer(), ensureServer(), ensureServer(), ensureServer()]);
+  assert.equal(new Set(ports).size, 1, 'every caller must be handed the same port');
 
+  const live = await probe(ports[0]);
+  assert.ok(live.ok, 'and a daemon must actually be listening on it');
   t.after(async () => {
-    for (const port of new Set(ports)) {
-      const live = await probe(port);
-      if (live.ok && live.pid !== undefined) await shutdown(port, live.pid);
-    }
+    if (live.pid !== undefined) await shutdown(ports[0], live.pid);
   });
 
-  assert.equal(new Set(ports).size, 1, 'every caller must be handed the same daemon');
-
-  const recorded = JSON.parse(await readFile(path.join(home, 'server.json'), 'utf8'));
-  assert.equal(recorded.port, ports[0], 'and it must be the one that got recorded');
-
-  // Left behind, the lock would make the next invocation wait out its whole
-  // staleness window before starting anything.
-  await assert.rejects(readFile(path.join(home, 'server.json.lock'), 'utf8'));
+  // One listener, so exactly one daemon: a second would have failed to bind.
+  const pids = new Set();
+  for (const port of ports) {
+    const health = await probe(port);
+    if (health.pid !== undefined) pids.add(health.pid);
+  }
+  assert.equal(pids.size, 1, 'and there must be exactly one of them');
 });

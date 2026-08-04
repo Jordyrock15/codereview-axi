@@ -43,7 +43,14 @@ const setup = async (t) => {
   const home = await mkdtemp(path.join(tmpdir(), 'cr-home-'));
   const repo = await makeRepo({ 'a.js': 'one\ntwo\nthree\nfour\nfive\n' });
 
-  const env = { ...process.env, CODEREVIEW_AXI_HOME: home };
+  const { findPort } = await import('../../src/server/index.js');
+  // A port of this file's own: cr uses one fixed port by design, so parallel
+  // tests must not share it.
+  const env = {
+    ...process.env,
+    CODEREVIEW_AXI_HOME: home,
+    CODEREVIEW_AXI_PORT: String(await findPort(45000 + Math.floor(Math.random() * 3000))),
+  };
 
   /** @param {string[]} args */
   const cr = async (args) => {
@@ -281,7 +288,12 @@ test('cr runs correctly when installed under a directory whose path contains a s
   const repo = await makeRepo({ 'a.js': 'one\n' });
   t.after(repo.cleanup);
   await repo.write('a.js', 'ONE\n');
-  const env = { ...process.env, CODEREVIEW_AXI_HOME: home };
+  const { findPort: findFreePort } = await import('../../src/server/index.js');
+  const env = {
+    ...process.env,
+    CODEREVIEW_AXI_HOME: home,
+    CODEREVIEW_AXI_PORT: String(await findFreePort(45000 + Math.floor(Math.random() * 3000))),
+  };
 
   t.after(async () => {
     try {
