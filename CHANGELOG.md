@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.7](https://github.com/Jordyrock15/codereview-axi/compare/v0.1.6...v0.1.7) (2026-08-04)
+
+
+### Bug Fixes
+
+* acknowledge delivery, one daemon per race, and contain long paths ([#24](https://github.com/Jordyrock15/codereview-axi/issues/24)) ([38a9183](https://github.com/Jordyrock15/codereview-axi/commit/38a9183110bb53f25513c9fb3ecd0957724b23ee))
+
 ## [0.1.6](https://github.com/Jordyrock15/codereview-axi/compare/v0.1.5...v0.1.6) (2026-08-03)
 
 
