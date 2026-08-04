@@ -292,6 +292,29 @@ const toggleQueuePanel = (group) => {
 };
 
 /**
+ * Fills the composer's heading. A deep path rendered as one string wraps onto
+ * three lines at this size and bursts the dialog, so the directory ellipsises
+ * while the basename and line range, the parts that say what is being
+ * annotated, stay whole. The full path goes in the tooltip.
+ * @param {HTMLElement} who
+ * @param {string} path
+ * @param {number} from
+ * @param {number} to
+ * @returns {void}
+ */
+const fillComposerHeading = (who, path, from, to) => {
+  const range = from === to ? String(from) : `${from}-${to}`;
+  const { dir, base } = splitPathLabel(path);
+
+  const where = el('span', 'annotate-path');
+  if (dir) where.append(el('span', 'dir', dir));
+  where.append(el('span', 'base', `${base}:${range}`));
+
+  who.replaceChildren(el('span', 'annotate-label', 'Annotate'), where);
+  who.title = `${path}:${range}`;
+};
+
+/**
  * Switches to the comment's file if needed (the same path the files-nav
  * click handler takes) and scrolls its thread into view.
  * @param {number} id
@@ -422,7 +445,9 @@ const openComposer = (file, afterRow) => {
   box.dataset.side = picking.side;
   const from = Math.min(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
   const to = Math.max(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
-  box.append(el('div', 'who', `Annotate ${file.path}:${from === to ? from : `${from}-${to}`}`));
+  const heading = el('div', 'who');
+  fillComposerHeading(heading, file.path, from, to);
+  box.append(heading);
 
   const text = document.createElement('textarea');
   text.placeholder = 'What is wrong, and what should change';
@@ -521,7 +546,7 @@ const updateComposerHeader = (box, file) => {
   const from = Math.min(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
   const to = Math.max(/** @type {number} */ (picking.start), /** @type {number} */ (picking.end));
   const who = box.querySelector('.who');
-  if (who) who.textContent = `Annotate ${file.path}:${from === to ? from : `${from}-${to}`}`;
+  if (who) fillComposerHeading(/** @type {HTMLElement} */ (who), file.path, from, to);
 
   // A restart note from an earlier rejected shift-click must not linger past
   // the next successful pick, and this is the only path a successful

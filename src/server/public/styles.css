@@ -331,7 +331,26 @@ main {
   text-transform: none;
   letter-spacing: normal;
   margin-bottom: 10px;
+  /* One line, always: the heading names the target, and a wrapped path pushed
+     the textarea and buttons down until the dialog stopped looking like one. */
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
 }
+
+.thread.composer .annotate-label { flex-shrink: 0; }
+.thread.composer .annotate-path { display: flex; min-width: 0; }
+/* The directory is the disposable half; the basename and range are not. */
+.thread.composer .annotate-path .dir {
+  color: var(--mid);
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.thread.composer .annotate-path .base { white-space: nowrap; flex-shrink: 0; }
 
 .thread textarea {
   width: 100%;
