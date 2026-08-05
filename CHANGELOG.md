@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.8](https://github.com/Jordyrock15/codereview-axi/compare/v0.1.7...v0.1.8) (2026-08-05)
+
+
+### Code Refactoring
+
+* **ui:** extract the review UI's decisions and cover it with tests ([#29](https://github.com/Jordyrock15/codereview-axi/issues/29)) ([7d3327b](https://github.com/Jordyrock15/codereview-axi/commit/7d3327bac6d56cd640133bc4bd98cfb96ddd3f56))
+
 ## [0.1.7](https://github.com/Jordyrock15/codereview-axi/compare/v0.1.6...v0.1.7) (2026-08-04)
 
 
