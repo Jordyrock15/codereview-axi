@@ -1,3 +1,4 @@
+import { stat } from 'node:fs/promises';
 import { toplevel, currentBranch } from '../diff/git.js';
 import { buildSnapshot as defaultBuildSnapshot } from '../diff/snapshot.js';
 import { mutateState, loadState } from '../state/store.js';
@@ -217,12 +218,29 @@ export const createApp = ({
   });
 
   /**
+   * An `open` session whose worktree is gone (a deleted temp dir, an old
+   * `cr open` nobody ever closes) can never be closed through normal use, so
+   * it must not count as a reason to keep the daemon up.
+   * @param {Session} session
+   * @returns {Promise<boolean>}
+   */
+  const holdsDaemonOpen = async (session) => {
+    if (session.status !== 'open') return false;
+    try {
+      await stat(session.repo);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  /**
    * Re-reads the state when the timer fires rather than trusting the check that
    * scheduled it. `cr close` followed straight away by `cr open` is ordinary
    * use, and deciding at schedule time would shoot the daemon out from under
    * the session that had just opened. Every session in the file is considered,
    * not just this repo's: one daemon serves them all, so another repo's open
-   * review has to keep it alive.
+   * review has to keep it alive, unless that review's worktree no longer exists.
    * @returns {void}
    */
   const scheduleIdleStop = () => {
@@ -231,7 +249,8 @@ export const createApp = ({
       // diff is a 422), and then nothing is left to serve after all.
       if (opening > 0) { scheduleIdleStop(); return; }
       const state = await loadState();
-      if (!Object.values(state.sessions).some((session) => session.status === 'open')) onIdle();
+      const stillHeld = await Promise.all(Object.values(state.sessions).map(holdsDaemonOpen));
+      if (!stillHeld.some(Boolean)) onIdle();
     }, 250);
     // Never the reason the process stays up.
     timer.unref();
