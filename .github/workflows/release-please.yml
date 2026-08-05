@@ -38,6 +38,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.release.outputs.tag_name }}
         run: |
-          gh workflow run publish.yml --ref main --field tag="$TAG"
+          # --repo is not optional here: this job never checks the repo out, so gh
+          # has no git remote to infer it from and exits before it dispatches.
+          gh workflow run publish.yml --repo "$GITHUB_REPOSITORY" --ref main --field tag="$TAG"
           echo "dispatched publish for $TAG"
 
