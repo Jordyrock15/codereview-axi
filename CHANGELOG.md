@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.9](https://github.com/Jordyrock15/codereview-axi/compare/v0.1.8...v0.1.9) (2026-08-06)
+
+
+### Features
+
+* **ui:** show how many comments the agent holds ([#32](https://github.com/Jordyrock15/codereview-axi/issues/32)) ([6b41b33](https://github.com/Jordyrock15/codereview-axi/commit/6b41b3393bf8917d32ba5c7cda0fdd01aa604657))
+
 ## [0.1.8](https://github.com/Jordyrock15/codereview-axi/compare/v0.1.7...v0.1.8) (2026-08-05)
 
 
