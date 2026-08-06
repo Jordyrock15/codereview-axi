@@ -22,13 +22,17 @@ const press = (document, id) => { /** @type {HTMLElement} */ (document.getElemen
 
 /**
  * One row per group's distinct copy, so a case that presses one toggle can
- * assert on all three groups' labels and empty text in turn.
+ * assert on every group's labels and empty text in turn.
  * @type {{toggle: string, title: string, region: string, close: string, empty: string}[]}
  */
 const PANEL_CASES = [
   {
     toggle: 'queue-open', title: 'Queue', region: 'Queued comments', close: 'Close queue',
     empty: 'Nothing queued. Draft a comment on the diff and it will show up here before you send it.',
+  },
+  {
+    toggle: 'pending-open', title: 'Pending', region: 'Pending comments', close: 'Close pending comments',
+    empty: 'Nothing pending. Comments you send wait here until the agent answers them.',
   },
   {
     toggle: 'answered-open', title: 'Answered', region: 'Answered comments', close: 'Close answered comments',
@@ -54,7 +58,11 @@ test('each group names itself in the title, the region and the close button', as
   const app = await mountApp({ session: withEachStatus() });
   try {
     // Queued last: its labels match the shell's static markup already.
-    for (const panelCase of [PANEL_CASES[1], PANEL_CASES[2], PANEL_CASES[0]]) {
+    const orderedCases = [
+      ...PANEL_CASES.filter((panelCase) => panelCase.toggle !== 'queue-open'),
+      ...PANEL_CASES.filter((panelCase) => panelCase.toggle === 'queue-open'),
+    ];
+    for (const panelCase of orderedCases) {
       press(app.document, panelCase.toggle);
       const panel = /** @type {HTMLElement} */ (app.document.getElementById('queue-panel'));
       assert.equal(panel.hidden, false);
@@ -80,7 +88,11 @@ test('each group lists only its own comments', async () => {
 });
 
 test('an empty group says what would collect there, and only then', async () => {
-  for (const panelCase of PANEL_CASES) {
+  const orderedCases = [
+    ...PANEL_CASES.filter((panelCase) => panelCase.toggle !== 'queue-open'),
+    ...PANEL_CASES.filter((panelCase) => panelCase.toggle === 'queue-open'),
+  ];
+  for (const panelCase of orderedCases) {
     const empty = await mountApp({ session: sessionFixture({ comments: [] }) });
     try {
       press(empty.document, panelCase.toggle);
@@ -138,6 +150,27 @@ test('Remove deletes the comment and the panel renders the emptied queue', async
       app.document.querySelector('#queue-list .queue-empty')?.textContent,
       'Nothing queued. Draft a comment on the diff and it will show up here before you send it.',
     );
+  } finally {
+    app.teardown();
+  }
+});
+
+test('a pending comment cannot be withdrawn', async () => {
+  const app = await mountApp({ session: sessionFixture({ comments: [commentFixture({ status: 'sent' })] }) });
+  try {
+    press(app.document, 'pending-open');
+    assert.equal(app.document.querySelectorAll('#queue-list .queue-entry').length, 1);
+    assert.equal(app.document.querySelectorAll('#queue-list .queue-entry-remove').length, 0);
+  } finally {
+    app.teardown();
+  }
+});
+
+test('the panel offers no Send from the pending group', async () => {
+  const app = await mountApp({ session: sessionFixture({ comments: [commentFixture({ status: 'sent' })] }) });
+  try {
+    press(app.document, 'pending-open');
+    assert.equal(/** @type {HTMLElement} */ (app.document.getElementById('queue-send')).hidden, true);
   } finally {
     app.teardown();
   }

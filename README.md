@@ -46,7 +46,7 @@ Or, in agents that expose skills as slash commands (Claude Code, for example), i
 
 The skill covers the trigger and the loop, including the rule that keeps `cr wait` in the foreground: a poll pushed into the background returns comments to a process nobody is listening to, and the human waits on an agent that has moved on.
 
-You need Node 20 or newer and `git` on `PATH`. `gh` is needed only for `--pr`. There are no runtime dependencies and no build step.
+You need Node 20.19 or newer and `git` on `PATH`. `gh` is needed only for `--pr`. There are no runtime dependencies and no build step.
 
 ## Other ways to run it
 
@@ -103,8 +103,9 @@ The browser tab is where you do the reviewing; everything else is the agent's si
 - **Queue** saves the comment as a draft. Nothing reaches the agent yet.
 - **Queued n** in the header lists everything drafted, so you can read the batch back and remove anything before committing to it.
 - **Send** hands the whole batch over. The header then reads `waiting for agent` until it collects them, and `agent has it` while it works.
+- **Pending n** holds what the agent has and owes a reply on, and opens the same shared panel on that group. Its rows carry no **Remove**: the comment is already in the agent's hands, and withdrawing it behind the agent's back would leave the two sides disagreeing about what is outstanding.
 - Answers arrive **threaded under your comment**, and the diff refreshes in place once the agent has made its changes. **Reply** adds a follow-up to the same thread; **Resolve** closes it.
-- **Answered n** and **Resolved n** sit beside Queued and open the same panel on a different group, so a thread you resolve collects somewhere you can find it again. Clicking any row jumps to that comment, switching file first if it is in another one. Only queued rows offer **Remove**: an answered comment has already been sent, and dropping it would take the agent's reply with it.
+- **Answered n** and **Resolved n** sit beside Pending and open the same panel on a different group, so a thread you resolve collects somewhere you can find it again. Clicking any row jumps to that comment, switching file first if it is in another one. Only queued rows offer **Remove**: an answered comment has already been sent, and dropping it would take the agent's reply with it.
 - **Done** ends the session and tells the agent to stop. The header then reads `disconnected`, and the server shuts itself down once no session is left open.
 
 The header carries the branch you are reviewing and its base, with whatever the agent last said to you dimmed beside it. The sidebar counts each file's added and removed lines in the diff's own green and red, and shows a file's open comment count instead once it has any.
@@ -195,7 +196,7 @@ Every exit-1 error is `{error: {code, message}}` in TOON or JSON. The slugs it u
 
 ## Security
 
-- The server binds to loopback only; it is never reachable from another machine. It starts on demand and stops itself once the last open session closes, so a finished review leaves no process behind holding a port.
+- The server binds to loopback only; it is never reachable from another machine. It starts on demand and stops itself once the last open session closes, so a finished review leaves no process behind holding a port. A session whose worktree no longer exists does not count as open: nothing can close it through the UI, since there is no tree left to open a tab against, and before 0.1.8 one such session kept every daemon alive indefinitely.
 - Each session gets a random per-session token, required on every API request either as an `x-cr-token` header or a `?t=` query parameter.
 - Every request is checked against the Host header and, when present, the Origin header; anything that is not `127.0.0.1` or `localhost` on the session's own port is rejected.
 - State is written to `~/.codereview-axi/state.json` with file mode `0600`.
@@ -219,7 +220,9 @@ Deferred to v2, absent by design, so nobody files them as bugs:
 - Posting review comments back to GitHub, or reading existing PR comments.
 - Any provider other than GitHub, or reviewing an arbitrary rev range beyond a base ref.
 
-Of the browser files, `activity.js`, `overlay.js`, `queue.js`, `path-label.js`, `pair.js` and `highlight.js` are covered by tests, because their logic was deliberately factored out to be testable. `app.js`, the DOM layer itself, has none: it rests on manual verification, and the interactive paths have been exercised by one person rather than proven.
+The browser files are covered two ways. Every decision the UI makes lives in a pure module with its own tests: `counts.js` for the counters and the send block, `pick.js` for the gutter selection rules, `quote.js` for a quote's contiguity, `labels.js` for the header text, and `activity.js`, `overlay.js`, `queue.js`, `path-label.js`, `pair.js` and `highlight.js` as before. `app.js` keeps only the DOM reads and writes, and those run under jsdom: `test/helpers/dom.js` mounts it against the real page markup with the network faked, and four suites drive rendering, the composer and its drafts, the panels, and sending, closing and the stream.
+
+Two things stay uncovered on purpose. `styles.css` has no tests, because asserting on real layout needs a browser and the suite must run under node alone. And no test can prove what a browser actually paints, so the visual result still rests on someone looking at it.
 
 ## Development
 
@@ -227,4 +230,14 @@ Of the browser files, `activity.js`, `overlay.js`, `queue.js`, `path-label.js`, 
 npm run check
 ```
 
-Runs the typecheck (`tsc --noEmit`) and the full test suite. Session and server state live under `~/.codereview-axi/` (override with `CODEREVIEW_AXI_HOME`).
+Runs the typecheck (`tsc --noEmit`) and the full test suite. `jsdom` is the only dev dependency of substance, and it is what lets the DOM layer be tested without a browser; there are still no runtime dependencies.
+
+To run one area on its own:
+
+```sh
+node --test test/server/app-composer.test.js
+```
+
+Session and server state live under `~/.codereview-axi/` (override with `CODEREVIEW_AXI_HOME`).
+
+The server uses one fixed port, 4390, and that is deliberate: the port is a mutex the operating system enforces, so a second daemon cannot exist. `cr` fails loudly rather than drifting to another port if 4390 is busy. Override it with `CODEREVIEW_AXI_PORT`, which is how you run a second copy, for example a branch build, without touching the daemon serving your real review.

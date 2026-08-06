@@ -119,6 +119,7 @@ const counts = () => {
   $('counts-unsent').textContent = shown.staleLabel;
   $('counts-rest').textContent = '';
   $('queue-open').textContent = `Queued ${shown.unsent}`;
+  $('pending-open').textContent = `Pending ${shown.pending}`;
   $('answered-open').textContent = `Answered ${shown.answered}`;
   $('resolved-open').textContent = `Resolved ${shown.resolved}`;
 
@@ -145,6 +146,13 @@ const PANELS = {
     region: 'Queued comments',
     close: 'Close queue',
     empty: 'Nothing queued. Draft a comment on the diff and it will show up here before you send it.',
+  },
+  pending: {
+    toggle: 'pending-open',
+    title: 'Pending',
+    region: 'Pending comments',
+    close: 'Close pending comments',
+    empty: 'Nothing pending. Comments you send wait here until the agent answers them.',
   },
   answered: {
     toggle: 'answered-open',
@@ -237,7 +245,7 @@ const renderQueuePanel = () => {
   const config = PANELS[group];
   $('queue-title').textContent = config.title;
 
-  // One panel serves three groups, so the region and its close button have to be
+  // One panel serves every group, so the region and its close button have to be
   // relabelled with it: left static, a screen reader announced "Queued comments"
   // while the answered list was on screen. Named per group rather than made
   // generic, so what is announced matches what is shown.
@@ -1027,6 +1035,7 @@ $('send').addEventListener('click', send);
 $('done').addEventListener('click', done);
 $('view').addEventListener('click', toggleView);
 $('queue-open').addEventListener('click', () => toggleQueuePanel('queued'));
+$('pending-open').addEventListener('click', () => toggleQueuePanel('pending'));
 $('answered-open').addEventListener('click', () => toggleQueuePanel('answered'));
 $('resolved-open').addEventListener('click', () => toggleQueuePanel('resolved'));
 $('queue-close').addEventListener('click', closeQueuePanel);

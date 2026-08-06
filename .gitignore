@@ -2,3 +2,5 @@ node_modules/
 *.log
 .claude/settings.local.json
 .superpowers/
+# Planning docs from the superpowers skills: working notes, not part of the product.
+docs/superpowers/
