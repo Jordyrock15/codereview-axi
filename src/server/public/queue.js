@@ -8,6 +8,7 @@ const QUEUED = ['open'];
 /** The statuses each named group collects. */
 export const GROUPS = {
   queued: ['open'],
+  pending: ['sent'],
   answered: ['answered'],
   resolved: ['resolved'],
 };

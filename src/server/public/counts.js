@@ -10,6 +10,7 @@
  * @property {number} answered — Comments the agent has replied to.
  * @property {number} stale — Comments whose anchor no longer matches the diff.
  * @property {number} resolved — Threads the human has closed.
+ * @property {number} pending — Comments the agent holds and owes a reply on.
  * @property {string} staleLabel — The stale count as text, empty when nothing is stale.
  * @property {string} sendLabel — The text both Send buttons carry.
  * @property {boolean} sendDisabled — Whether both Send buttons are disabled.
@@ -42,6 +43,7 @@ export const countsView = (comments) => {
     answered: count('answered'),
     stale,
     resolved: count('resolved'),
+    pending: awaitingAgent,
     staleLabel: stale === 0 ? '' : `${stale} stale`,
     sendLabel: unsent === 0 ? 'Send' : `Send ${unsent}`,
     sendDisabled: unsent === 0 || blocked,

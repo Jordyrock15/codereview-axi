@@ -70,7 +70,31 @@ test('two replies owed block Send in the plural', () => {
 test('no comments at all is a disabled, unlabelled Send', () => {
   const shown = countsView([]);
   assert.deepEqual(shown, {
-    unsent: 0, answered: 0, stale: 0, resolved: 0,
+    unsent: 0, answered: 0, stale: 0, resolved: 0, pending: 0,
     staleLabel: '', sendLabel: 'Send', sendDisabled: true, sendTitle: '',
   });
+});
+
+test('pending counts the comments the agent holds', () => {
+  const shown = countsView([
+    comment({ id: 1, status: 'open' }),
+    comment({ id: 2, status: 'sent' }),
+    comment({ id: 3, status: 'sent' }),
+    comment({ id: 4, status: 'answered' }),
+  ]);
+  assert.equal(shown.pending, 2);
+});
+
+test('pending is zero when the agent holds nothing', () => {
+  assert.equal(countsView([comment({ status: 'open' })]).pending, 0);
+});
+
+test('pending is the same number the blocked send names', () => {
+  const shown = countsView([
+    comment({ id: 1, status: 'open' }),
+    comment({ id: 2, status: 'open' }),
+    comment({ id: 3, status: 'sent' }),
+  ]);
+  assert.equal(shown.pending, 1);
+  assert.equal(shown.sendTitle, 'The agent still owes a reply. Your drafts stay queued until it has answered.');
 });

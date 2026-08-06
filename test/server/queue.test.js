@@ -118,3 +118,15 @@ test('every group is disjoint, so a comment never shows in two panels at once', 
   const all = Object.values(GROUPS).flat();
   assert.equal(new Set(all).size, all.length);
 });
+
+test('a group of sent comments collects only what the agent holds', () => {
+  const entries = groupEntries({
+    comments: [
+      comment({ id: 1, status: 'open', body: 'queued one' }),
+      comment({ id: 2, status: 'sent', body: 'sent one' }),
+      comment({ id: 3, status: 'sent', body: 'sent two' }),
+      comment({ id: 4, status: 'answered', body: 'answered one' }),
+    ],
+  }, GROUPS.pending);
+  assert.deepEqual(entries.map((e) => e.body), ['sent one', 'sent two']);
+});

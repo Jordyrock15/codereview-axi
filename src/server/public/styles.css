@@ -114,6 +114,7 @@ body {
 #counts { color: var(--mid); white-space: nowrap; display: flex; align-items: center; gap: 4px; }
 
 #queue-open[aria-expanded="true"],
+#pending-open[aria-expanded="true"],
 #answered-open[aria-expanded="true"],
 #resolved-open[aria-expanded="true"] { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
 

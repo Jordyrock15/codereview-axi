@@ -73,6 +73,22 @@ test('a queued comment enables Send and counts it', async () => {
   }
 });
 
+test('sending moves a comment from queued to pending', async () => {
+  const app = await mountApp({ session: sessionFixture({ comments: [commentFixture({ status: 'open' })] }) });
+  try {
+    assert.equal(app.document.getElementById('queue-open')?.textContent, 'Queued 1');
+    assert.equal(app.document.getElementById('pending-open')?.textContent, 'Pending 0');
+
+    button(app.document, 'send').click();
+    await settle();
+
+    assert.equal(app.document.getElementById('queue-open')?.textContent, 'Queued 0');
+    assert.equal(app.document.getElementById('pending-open')?.textContent, 'Pending 1');
+  } finally {
+    app.teardown();
+  }
+});
+
 test('a round still owed blocks Send and says why', async () => {
   const app = await mountApp({
     session: sessionFixture({
