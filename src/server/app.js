@@ -17,6 +17,7 @@ import { takeLease, releaseLease } from './lease.js';
 import { commentContext, expandContext } from '../diff/context.js';
 import { shellHtml, assetResponse } from './ui.js';
 import { shQuote } from '../shell.js';
+import { buildChangeGraph } from '../graph/build.js';
 
 /**
  * @typedef {import('../types.js').Session} Session
@@ -70,12 +71,26 @@ const fileMeta = ({ path, status, added, removed, tags, binary }) => ({ path, st
 const publicSession = ({ token, ...rest }) => rest;
 
 /**
- * @param {{port: number, now?: () => number, hub?: ReturnType<typeof createHub>, buildSnapshot?: typeof defaultBuildSnapshot, onIdle?: () => void}} options
+ * @param {{port: number, now?: () => number, hub?: ReturnType<typeof createHub>, buildSnapshot?: typeof defaultBuildSnapshot, buildGraph?: typeof buildChangeGraph, onIdle?: () => void}} options
  */
 export const createApp = ({
   port, now = () => Date.now(), hub = createHub(), buildSnapshot = defaultBuildSnapshot,
-  onIdle = () => {},
+  buildGraph = buildChangeGraph, onIdle = () => {},
 }) => {
+  /**
+   * @param {string} root
+   * @param {import('../types.js').Snapshot} snapshot
+   * @returns {import('../graph/types.js').IChangeGraph|null}
+   */
+  const graphFor = (root, snapshot) => {
+    try {
+      return buildGraph(root, snapshot.files.map(({ path, status, added, removed }) => ({ path, status, added, removed })));
+    } catch (err) {
+      console.error('cr: change map failed', err);
+      return null;
+    }
+  };
+
   /**
    * Loads a session and applies the full guard. Throws on any failure.
    * @param {any} ctx
@@ -300,6 +315,7 @@ export const createApp = ({
           // note cannot serve as one: --say overwrites it every round, so the
           // header used to be whatever the agent last said.
           const branch = await currentBranch(root);
+          const graph = graphFor(root, built);
 
           // Building the snapshot is real git work (a diff, a merge-base, every
           // untracked file read); running it inside mutateState would serialise
@@ -324,6 +340,7 @@ export const createApp = ({
             // Set outside openOrReuse so a reused session picks up a branch
             // switch since it was opened.
             result.session.branch = branch;
+            result.session.graph = graph;
             // A reused session's threads are anchored against the old snapshot;
             // without this a second `cr open` leaves them silently pointing at
             // whatever now occupies their old line numbers.
@@ -371,10 +388,12 @@ export const createApp = ({
           throw translateBaseFailure(err, base);
         }
         const at = now();
+        const graph = graphFor(session.repo, snapshot);
 
         const result = await mutateState((state) => {
           const live = state.sessions[ctx.params.key];
           live.snapshot = snapshot;
+          live.graph = graph;
           live.snapshotAt = new Date(at).toISOString();
           live.updatedAt = new Date(at).toISOString();
           return reanchor(live, snapshot);

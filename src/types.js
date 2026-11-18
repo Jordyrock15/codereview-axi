@@ -107,6 +107,7 @@
  * @property {{role: 'agent'|'human', text: string, at: string}[]} chat — Message log.
  * @property {{holder: number, expiresAt: string}|null} lease — Current waiter, null when free.
  * @property {'unified'|'split'} view — Reading preference, per session, not per file.
+ * @property {import('./graph/types.js').IChangeGraph|null|undefined} graph — Change map of the snapshot, null when the build failed, undefined on a session written by an older version.
  * @property {string} createdAt — ISO timestamp.
  * @property {string} updatedAt — ISO timestamp.
  */

@@ -200,10 +200,32 @@ export const commentFixture = (overrides = {}) => ({
 });
 
 /**
+ * @param {Partial<import('../../src/graph/types.js').IChangeGraph>} overrides
+ * @returns {import('../../src/graph/types.js').IChangeGraph}
+ */
+export const graphFixture = (overrides = {}) => ({
+  nodes: [
+    { id: 'src/a.ts', kind: 'source', isNew: false, added: 1, removed: 1, layer: 0, row: 0 },
+    { id: 'src/b.ts', kind: 'source', isNew: false, added: 1, removed: 1, layer: 1, row: 0 },
+  ],
+  edges: [{ from: 'src/a.ts', to: 'src/b.ts', kind: 'import' }],
+  meta: {
+    typescript: true,
+    typescriptFrom: 'bundled',
+    typescriptVersion: '5.9.3',
+    repoTypescript: null,
+    message: 'Import links from the TypeScript 5.9.3 in codereview-axi. This repo has no TypeScript.',
+    ms: 1,
+    version: 1,
+  },
+  ...overrides,
+});
+
+/**
  * @param {Partial<Session>} overrides
  * @returns {Session}
  */
-export const sessionFixture = (overrides = {}) => ({
+export const sessionFixture =(overrides = {}) => ({
   key: 'abc123',
   token: 'tok',
   repo: '/tmp/repo',
@@ -220,6 +242,7 @@ export const sessionFixture = (overrides = {}) => ({
   chat: [],
   lease: null,
   view: 'unified',
+  graph: null,
   createdAt: '2026-08-04T10:00:00.000Z',
   updatedAt: '2026-08-04T10:00:00.000Z',
   ...overrides,

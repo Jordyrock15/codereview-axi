@@ -13,7 +13,7 @@ const freePort = async () => {
 /**
  * Boots the app on an ephemeral port with an isolated state home.
  * @param {import('node:test').TestContext} t
- * @param {{now?: () => number, buildSnapshot?: (repo: string, base?: string) => Promise<import('../../src/types.js').Snapshot>, onIdle?: () => void}} [options]
+ * @param {{now?: () => number, buildSnapshot?: (repo: string, base?: string) => Promise<import('../../src/types.js').Snapshot>, buildGraph?: import('../../src/graph/types.js').BuildChangeGraph, onIdle?: () => void}} [options]
  */
 export const startApp = async (t, options = {}) => {
   const home = await mkdtemp(path.join(tmpdir(), 'cr-home-'));
@@ -35,6 +35,7 @@ export const startApp = async (t, options = {}) => {
     port,
     now: options.now ?? (() => Date.now()),
     ...(options.buildSnapshot ? { buildSnapshot: options.buildSnapshot } : {}),
+    ...(options.buildGraph ? { buildGraph: options.buildGraph } : {}),
     ...(options.onIdle ? { onIdle: options.onIdle } : {}),
   });
   const server = http.createServer(app.handler);
