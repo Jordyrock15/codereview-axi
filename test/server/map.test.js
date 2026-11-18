@@ -138,7 +138,7 @@ test('label is text', () => {
   assert.equal(svg.querySelector('g.node')?.getAttribute('data-id'), id);
 });
 
-test('click selects, double click opens', () => {
+test('click, Enter and Space select, double click opens', () => {
   const window = dom();
   /** @type {string[]} */
   const selected = [];
@@ -153,9 +153,13 @@ test('click selects, double click opens', () => {
   target.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   target.dispatchEvent(new window.MouseEvent('dblclick', { bubbles: true }));
   target.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  const space = new window.KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true });
+  target.dispatchEvent(space);
+  target.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'a', bubbles: true }));
 
-  assert.deepEqual(selected, ['src/a.ts']);
-  assert.deepEqual(opened, ['src/a.ts', 'src/a.ts']);
+  assert.deepEqual(selected, ['src/a.ts', 'src/a.ts', 'src/a.ts']);
+  assert.deepEqual(opened, ['src/a.ts']);
+  assert.equal(space.defaultPrevented, true);
 });
 
 test('no typescript gives a grid', () => {

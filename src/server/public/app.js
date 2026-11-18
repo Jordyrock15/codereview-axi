@@ -330,11 +330,7 @@ const scrollToComment = (id) => {
   const comment = view.session?.comments.find((c) => c.id === id);
   if (!comment) return;
 
-  if (comment.file !== null && comment.file !== view.current) {
-    view.current = comment.file;
-    renderFiles();
-    renderDiff();
-  }
+  if (comment.file !== null && (comment.file !== view.current || view.map.open)) showFile(comment.file);
 
   const target = document.querySelector(`[data-comment-id="${id}"]`);
   target?.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'center' });
@@ -377,7 +373,7 @@ const renderFiles = () => {
     button.append(count);
     button.title = file.path;
     button.setAttribute('aria-current', String(file.path === view.current));
-    button.addEventListener('click', () => { view.current = file.path; renderDiff(); renderFiles(); });
+    button.addEventListener('click', () => showFile(file.path));
     nav.append(button);
   }
 };
@@ -1059,8 +1055,9 @@ const pathButton = (path, onClick) => {
  */
 const neighbourStrip = (path) => {
   const graph = currentGraph();
-  if (!graph || !graph.nodes.some((node) => node.id === path)) return null;
-  const groups = neighbourGroups(graph, path);
+  const node = graph ? nodeFor(graph, path) : null;
+  if (!graph || !node) return null;
+  const groups = neighbourGroups(graph, node.id);
   if (groups.length === 0) return null;
 
   const files = new Set(view.session?.snapshot.files.map((file) => file.path));
@@ -1080,13 +1077,21 @@ const neighbourStrip = (path) => {
  * @param {string} path
  * @returns {void}
  */
-const openDiff = (path) => {
+const showFile = (path) => {
   view.current = path;
-  view.map.selected = path;
   view.map.open = false;
   renderMapView();
   renderDiff();
   renderFiles();
+};
+
+/**
+ * @param {string} path
+ * @returns {void}
+ */
+const openDiff = (path) => {
+  view.map.selected = path;
+  showFile(path);
 };
 
 /**
@@ -1190,10 +1195,15 @@ const renderMapView = () => {
   renderMapPanel(graph);
 };
 
+let diffScrollTop = 0;
+
 /** @returns {void} */
 const toggleMap = () => {
+  const diff = $('diff');
+  if (!view.map.open) diffScrollTop = diff.scrollTop;
   view.map.open = !view.map.open;
   renderMapView();
+  if (!view.map.open) diff.scrollTop = diffScrollTop;
 };
 
 /** @returns {Promise<void>} */

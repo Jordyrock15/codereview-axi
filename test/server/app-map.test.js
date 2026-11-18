@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mountApp, sessionFixture, fileFixture, graphFixture, settle,
+  mountApp, sessionFixture, fileFixture, graphFixture, commentFixture, settle,
 } from '../helpers/dom.js';
 
 /**
@@ -219,6 +219,138 @@ test('a group node lists its files in the panel, and a member click opens its di
     await fire(app, buttonByText(panel, 'src/lib/y.ts'));
     assert.equal(byId(app, 'map').hidden, true);
     assert.equal(app.document.querySelector('.filehead span')?.textContent, 'src/lib/y.ts');
+  } finally {
+    app.teardown();
+  }
+});
+
+test('a nav click while the map is open closes the map and shows that diff', async () => {
+  const app = await mountApp({
+    session: sessionFixture({ snapshot: snapshot(['src/a.ts', 'src/b.ts']), graph: graphFixture() }),
+  });
+  try {
+    await fire(app, byId(app, 'map-toggle'));
+    const navB = [...app.document.querySelectorAll('#files button')].find((button) => button.getAttribute('title') === 'src/b.ts');
+    await fire(app, navB);
+    assert.equal(byId(app, 'map').hidden, true);
+    assert.equal(byId(app, 'diff').hidden, false);
+    assert.equal(byId(app, 'map-toggle').textContent, 'Map');
+    assert.equal(app.document.querySelector('.filehead span')?.textContent, 'src/b.ts');
+  } finally {
+    app.teardown();
+  }
+});
+
+test('a comment jump while the map is open closes the map and shows the comment file', async () => {
+  const app = await mountApp({
+    session: sessionFixture({
+      snapshot: snapshot(['src/a.ts', 'src/b.ts']),
+      graph: graphFixture(),
+      comments: [commentFixture({ id: 1, file: 'src/b.ts', status: 'open' })],
+    }),
+  });
+  try {
+    await fire(app, byId(app, 'map-toggle'));
+    await fire(app, byId(app, 'queue-open'));
+    await fire(app, app.document.querySelector('#queue-list .queue-entry-open'));
+    assert.equal(byId(app, 'map').hidden, true);
+    assert.equal(byId(app, 'diff').hidden, false);
+    assert.equal(app.document.querySelector('.filehead span')?.textContent, 'src/b.ts');
+  } finally {
+    app.teardown();
+  }
+});
+
+test('Enter on a focused node selects it, and the panel button opens its diff', async () => {
+  const app = await mountApp({
+    session: sessionFixture({ snapshot: snapshot(['src/a.ts', 'src/b.ts']), graph: graphFixture() }),
+  });
+  try {
+    await fire(app, byId(app, 'map-toggle'));
+    const target = /** @type {Element} */ (mapNode(app, 'src/b.ts'));
+    target.dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await settle();
+    assert.equal(byId(app, 'map').hidden, false);
+    assert.ok(mapNode(app, 'src/b.ts')?.classList.contains('selected'));
+    const panel = byId(app, 'map-panel');
+    assert.equal(panel.querySelector('h3')?.textContent, 'src/b.ts');
+
+    await fire(app, buttonByText(panel, 'Open diff'));
+    assert.equal(byId(app, 'map').hidden, true);
+    assert.equal(app.document.querySelector('.filehead span')?.textContent, 'src/b.ts');
+  } finally {
+    app.teardown();
+  }
+});
+
+test('the strip of a file inside a folder group shows the neighbours of its group', async () => {
+  const app = await mountApp({
+    session: sessionFixture({
+      snapshot: snapshot(['src/lib/x.ts', 'src/lib/y.ts', 'src/a.ts']),
+      graph: graphFixture({
+        nodes: [node('src/a.ts'), node('src/lib/', { layer: 1, members: ['src/lib/x.ts', 'src/lib/y.ts'] })],
+        edges: [{ from: 'src/a.ts', to: 'src/lib/', kind: 'import' }],
+      }),
+    }),
+  });
+  try {
+    const strip = /** @type {HTMLElement} */ (app.document.querySelector('#diff .strip'));
+    assert.ok(strip);
+    assert.match(strip.textContent ?? '', /Imported by/);
+    await fire(app, buttonByText(strip, 'src/a.ts'));
+    assert.equal(app.document.querySelector('.filehead span')?.textContent, 'src/a.ts');
+  } finally {
+    app.teardown();
+  }
+});
+
+test('the diff keeps its scroll position across Map and Diff', async () => {
+  const app = await mountApp({
+    session: sessionFixture({ snapshot: snapshot(['src/a.ts', 'src/b.ts']), graph: graphFixture() }),
+  });
+  try {
+    const diff = byId(app, 'diff');
+    let top = 0;
+    Object.defineProperty(diff, 'scrollTop', {
+      configurable: true,
+      get: () => (diff.hidden ? 0 : top),
+      set: (value) => { top = diff.hidden ? 0 : value; },
+    });
+    diff.scrollTop = 240;
+
+    await fire(app, byId(app, 'map-toggle'));
+    top = 0;
+    await fire(app, byId(app, 'map-toggle'));
+    assert.equal(diff.scrollTop, 240);
+  } finally {
+    app.teardown();
+  }
+});
+
+test('a path with <, &, " and spaces shows as text in the panel and the strip', async () => {
+  const odd = 'src/<a&"b> c.ts';
+  const app = await mountApp({
+    session: sessionFixture({
+      snapshot: snapshot(['src/a.ts', odd]),
+      graph: graphFixture({
+        nodes: [node('src/a.ts'), node(odd, { layer: 1 })],
+        edges: [{ from: 'src/a.ts', to: odd, kind: 'import' }],
+      }),
+    }),
+  });
+  try {
+    const strip = /** @type {HTMLElement} */ (app.document.querySelector('#diff .strip'));
+    assert.ok(buttonByText(strip, odd));
+    assert.equal(strip.querySelectorAll('a').length, 0);
+
+    await fire(app, byId(app, 'map-toggle'));
+    await fire(app, mapNode(app, odd));
+    const panel = byId(app, 'map-panel');
+    assert.equal(panel.querySelector('h3')?.textContent, odd);
+    assert.equal(panel.querySelectorAll('a').length, 0);
+
+    await fire(app, buttonByText(panel, 'Open diff'));
+    assert.equal(app.document.querySelector('.filehead span')?.textContent, odd);
   } finally {
     app.teardown();
   }

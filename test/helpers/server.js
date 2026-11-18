@@ -36,7 +36,7 @@ export const startApp = async (t, options = {}) => {
     now: options.now ?? (() => Date.now()),
     ...(options.buildSnapshot ? { buildSnapshot: options.buildSnapshot } : {}),
     ...(options.buildGraph ? { buildGraph: options.buildGraph } : {}),
-    ...(options.onIdle ?{ onIdle: options.onIdle } : {}),
+    ...(options.onIdle ? { onIdle: options.onIdle } : {}),
   });
   const server = http.createServer(app.handler);
   server.listen(port, '127.0.0.1');

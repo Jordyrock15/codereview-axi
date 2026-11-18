@@ -534,7 +534,7 @@ main {
 .kind-types .band { fill: var(--ink); }
 .kind-config .band { fill: var(--steel-600); }
 
-.edge { fill: none; stroke: var(--mid); stroke-width: 1.5; marker-end: url(#map-arrow); }
+.edge { fill: none; stroke: var(--mid); stroke-width: 1.5; }
 .edge-test, .edge-name { stroke: var(--add); }
 .edge-name, .cycle { stroke-dasharray: 5 4; }
 .cycle { stroke: var(--del); }

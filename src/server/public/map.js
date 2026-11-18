@@ -19,8 +19,8 @@
  * @typedef {Object} MapOptions
  * @property {string|null} selected — Id of the selected node, null for none.
  * @property {Map<string, number>} counts — Open comments per file path.
- * @property {(id: string) => void} onSelect — Called with a node id on a click.
- * @property {(id: string) => void} onOpen — Called with a node id on a double click or Enter.
+ * @property {(id: string) => void} onSelect — Called with a node id on a click, Enter or Space.
+ * @property {(id: string) => void} onOpen — Called with a node id on a double click.
  */
 
 /**
@@ -173,7 +173,10 @@ const drawNode = (doc, node, point, opts) => {
   group.addEventListener('click', () => opts.onSelect(node.id));
   group.addEventListener('dblclick', () => opts.onOpen(node.id));
   group.addEventListener('keydown', (event) => {
-    if (/** @type {KeyboardEvent} */ (event).key === 'Enter') opts.onOpen(node.id);
+    const { key } = /** @type {KeyboardEvent} */ (event);
+    if (key !== 'Enter' && key !== ' ') return;
+    event.preventDefault();
+    opts.onSelect(node.id);
   });
   return group;
 };
