@@ -1,12 +1,14 @@
+import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { takeLease, releaseLease, leaseHolder, LEASE_TTL_MS } from '../../src/server/lease.js';
 
 const NOW = 1_800_000_000_000;
-// A lease is only honoured while its holder process is alive, so a holder that
-// must read as live has to be a real pid. 111 is used where the assertion is
-// about expiry or ownership, which never consults liveness.
+// A lease is only honoured while its holder is alive, so liveness tests use a
+// real live pid or the pid of a child that already exited. 111 is used where
+// the assertion is about expiry or ownership, which never consults liveness.
 const LIVE = process.pid;
+const DEAD = spawnSync(process.execPath, ['-e', '']).pid;
 /** @type {() => any} */
 const session = () => ({ lease: null, updatedAt: '' });
 
@@ -60,9 +62,7 @@ test('leaseHolder reports the live holder and null once expired', () => {
 
 test('a lease whose holder is gone is free, even well inside its expiry', () => {
   const s = session();
-  // A poll may legitimately run for the whole TTL, so waiting for the clock
-  // locked the session out for 15 minutes every time a `cr wait` was killed.
-  takeLease(s, 111, NOW, LEASE_TTL_MS);
-  assert.equal(leaseHolder(s, NOW + 10), null, '111 is not a running process');
+  takeLease(s, DEAD, NOW, LEASE_TTL_MS);
+  assert.equal(leaseHolder(s, NOW + 10), null, `${DEAD} is not a running process`);
   assert.equal(takeLease(s, LIVE, NOW + 10, LEASE_TTL_MS).holder, LIVE);
 });
