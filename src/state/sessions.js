@@ -97,6 +97,7 @@ export const openOrReuse = (state, {
     repo,
     // The open route fills this in from git once the snapshot is built.
     branch: null,
+    graph: null,
     base: base ?? null,
     pr: pr ?? null,
     url: sessionUrl(key, token, port),

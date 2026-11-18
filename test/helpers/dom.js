@@ -220,6 +220,7 @@ export const sessionFixture = (overrides = {}) => ({
   chat: [],
   lease: null,
   view: 'unified',
+  graph: null,
   createdAt: '2026-08-04T10:00:00.000Z',
   updatedAt: '2026-08-04T10:00:00.000Z',
   ...overrides,
