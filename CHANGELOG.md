@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.11](https://github.com/Jordyrock15/codereview-axi/compare/v0.1.10...v0.1.11) (2026-11-18)
+
+
+### Bug Fixes
+
+* **server:** backfill a missing change map when a session loads ([#38](https://github.com/Jordyrock15/codereview-axi/issues/38)) ([ce82c65](https://github.com/Jordyrock15/codereview-axi/commit/ce82c650f2e159c67660abc26d27ffe6ad184892))
+
 ## [0.1.10](https://github.com/Jordyrock15/codereview-axi/compare/v0.1.9...v0.1.10) (2026-11-18)
 
 
