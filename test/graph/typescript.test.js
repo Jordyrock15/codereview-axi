@@ -10,92 +10,64 @@ const ownTypeScriptDir = dirname(require.resolve('typescript/package.json'));
 /** @type {string} */
 const ownVersion = require('typescript').version;
 
-const fakePackage = JSON.stringify({ name: 'typescript', version: '5.0.0-fake', main: 'index.js' });
-const ts7Package = JSON.stringify({ name: 'typescript', version: '7.0.2', main: 'index.js' });
-const ts7Index = "module.exports = { version: '7.0.2', versionMajorMinor: '7.0' };";
-const noFallback = () => { throw new Error('gone'); };
+/**
+ * @param {Record<string, string>} files
+ * @param {import('../../src/graph/typescript.js').ILoadTypeScriptOptions} [options]
+ * @returns {Promise<import('../../src/graph/typescript.js').ITypeScriptPick>}
+ */
+const pickFor = async (files, options) => {
+  const tree = await makeTree(files);
+  try {
+    return loadTypeScript(tree.dir, options);
+  } finally {
+    await tree.cleanup();
+  }
+};
 
-test('repo typescript with the JS API wins', async () => {
-  const tree = await makeTree({
-    'node_modules/typescript/package.json': fakePackage,
-    'node_modules/typescript/index.js': `module.exports = { ...require(${JSON.stringify(ownTypeScriptDir)}), version: '5.0.0-fake' };`,
+/**
+ * @param {string} version
+ * @returns {string}
+ */
+const packageWith = (version) => JSON.stringify({ name: 'typescript', version, main: 'index.js' });
+
+test('repo typescript never runs', async () => {
+  const pick = await pickFor({
+    'node_modules/typescript/package.json': packageWith('5.0.0-fake'),
+    'node_modules/typescript/index.js': `globalThis.__crRepoTypescriptRan = true; module.exports = require(${JSON.stringify(ownTypeScriptDir)});`,
   });
-  try {
-    const pick = loadTypeScript(tree.dir);
-    assert.equal(pick.from, 'repo');
-    assert.equal(pick.version, '5.0.0-fake');
-    assert.equal(pick.message, "Import links from this repo's TypeScript 5.0.0-fake.");
-    assert.equal(typeof pick.ts.preProcessFile, 'function');
-  } finally {
-    await tree.cleanup();
+  assert.equal(/** @type {any} */ (globalThis).__crRepoTypescriptRan, undefined);
+  assert.equal(pick.from, 'bundled');
+  assert.equal(pick.version, ownVersion);
+  assert.equal(pick.repoVersion, '5.0.0-fake');
+  assert.equal(pick.message, `Import links from the TypeScript ${ownVersion} in codereview-axi. This repo has TypeScript 5.0.0-fake.`);
+  assert.equal(typeof pick.ts.preProcessFile, 'function');
+});
+
+test('no repo typescript', async () => {
+  const pick = await pickFor({});
+  assert.equal(pick.from, 'bundled');
+  assert.equal(pick.repoVersion, null);
+  assert.equal(pick.message, `Import links from the TypeScript ${ownVersion} in codereview-axi. This repo has no TypeScript.`);
+});
+
+test('typescript 7', async () => {
+  const pick = await pickFor({ 'node_modules/typescript/package.json': packageWith('7.0.2') });
+  assert.equal(pick.repoVersion, '7.0.2');
+  assert.ok(pick.message.endsWith('This repo has TypeScript 7.0.2.'), pick.message);
+});
+
+test('bad package.json', async () => {
+  for (const text of ['{ "version": ', '{ "version": 7 }']) {
+    const pick = await pickFor({ 'node_modules/typescript/package.json': text });
+    assert.equal(pick.repoVersion, null);
+    assert.ok(pick.message.endsWith('This repo has no TypeScript.'), pick.message);
   }
 });
 
-test('no repo typescript uses the bundled one', async () => {
-  const tree = await makeTree({});
-  try {
-    const pick = loadTypeScript(tree.dir);
-    assert.equal(pick.from, 'bundled');
-    assert.equal(pick.version, ownVersion);
-    assert.equal(pick.message, `Import links from the TypeScript ${ownVersion} in codereview-axi: this repo has no TypeScript.`);
-  } finally {
-    await tree.cleanup();
-  }
-});
-
-test('typescript 7 without a JS API uses the bundled one', async () => {
-  const tree = await makeTree({
-    'node_modules/typescript/package.json': ts7Package,
-    'node_modules/typescript/index.js': ts7Index,
-  });
-  try {
-    const pick = loadTypeScript(tree.dir);
-    assert.equal(pick.from, 'bundled');
-    assert.equal(pick.version, ownVersion);
-    assert.ok(pick.message.endsWith("this repo's TypeScript 7.0.2 has no JS API."), pick.message);
-    assert.equal(pick.message, `Import links from the TypeScript ${ownVersion} in codereview-axi: this repo's TypeScript 7.0.2 has no JS API.`);
-  } finally {
-    await tree.cleanup();
-  }
-});
-
-test('no fallback and no repo typescript', async () => {
-  const tree = await makeTree({});
-  try {
-    const pick = loadTypeScript(tree.dir, { loadBundled: noFallback });
-    assert.equal(pick.ts, null);
-    assert.equal(pick.from, 'none');
-    assert.equal(pick.version, null);
-    assert.equal(pick.message, 'No import links: this repo has no TypeScript.');
-  } finally {
-    await tree.cleanup();
-  }
-});
-
-test('no fallback and typescript 7', async () => {
-  const tree = await makeTree({
-    'node_modules/typescript/package.json': ts7Package,
-    'node_modules/typescript/index.js': ts7Index,
-  });
-  try {
-    const pick = loadTypeScript(tree.dir, { loadBundled: noFallback });
-    assert.equal(pick.ts, null);
-    assert.equal(pick.from, 'none');
-    assert.equal(pick.message, "No import links: this repo's TypeScript 7.0.2 has no JS API.");
-  } finally {
-    await tree.cleanup();
-  }
-});
-
-test('repo typescript with no version reads as unknown', async () => {
-  const tree = await makeTree({
-    'node_modules/typescript/package.json': ts7Package,
-    'node_modules/typescript/index.js': 'module.exports = {};',
-  });
-  try {
-    const pick = loadTypeScript(tree.dir, { loadBundled: noFallback });
-    assert.equal(pick.message, "No import links: this repo's TypeScript unknown has no JS API.");
-  } finally {
-    await tree.cleanup();
-  }
+test('bundled does not load', async () => {
+  const pick = await pickFor({}, { loadBundled: () => { throw new Error('gone'); } });
+  assert.equal(pick.ts, null);
+  assert.equal(pick.from, 'none');
+  assert.equal(pick.version, null);
+  assert.equal(pick.message, 'No import links: the TypeScript in codereview-axi did not load.');
 });
