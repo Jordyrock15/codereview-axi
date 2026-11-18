@@ -122,3 +122,74 @@ test('name edge skips deleted files', () => {
   assert.deepEqual(nameEdges([changed('src/foo.js', 'deleted'), changed('src/foo.test.js')], []), []);
   assert.deepEqual(nameEdges([changed('src/foo.js'), changed('src/foo.test.js', 'deleted')], []), []);
 });
+
+test('projects resolve without a walk of unrelated folders', async () => {
+  const made = await makeTree({
+    'tsconfig.json': JSON.stringify({ files: [], references: [{ path: './tsconfig.app.json' }] }),
+    'tsconfig.app.json': JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { '@/*': ['src/*'] } }, include: ['src', 'unrelated'] }),
+    'src/a.ts': "import { b } from '@/b';\nexport const a = b;\n",
+    'src/b.ts': 'export const b = 1;\n',
+    'unrelated/deep/z.ts': 'export const z = 1;\n',
+    'src/unrelated/y.ts': 'export const y = 1;\n',
+  });
+  /** @type {string[]} */
+  const touched = [];
+  const sys = new Proxy(ts.sys, {
+    get: (target, name) => {
+      const value = target[name];
+      if (typeof value !== 'function') return value;
+      return (/** @type {any[]} */ ...args) => {
+        touched.push(`${String(name)} ${args.filter((arg) => typeof arg === 'string').join(' ')}`);
+        return value.apply(target, args);
+      };
+    },
+  });
+  try {
+    const edges = importEdges({ ...ts, sys }, made.dir, [changed('src/a.ts'), changed('src/b.ts')]);
+    assert.deepEqual(edges, [{ from: 'src/a.ts', to: 'src/b.ts', kind: 'import' }]);
+    assert.deepEqual(touched.filter((call) => /^(readDirectory|getDirectories) /.test(call)), []);
+    assert.deepEqual(touched.filter((call) => call.includes('unrelated')), []);
+  } finally {
+    await made.cleanup();
+  }
+});
+
+test('each file takes the options of the project that includes it', async () => {
+  const edges = await edgesFor({
+    'tsconfig.json': JSON.stringify({ files: [], references: [{ path: './tsconfig.lib.json' }, { path: './tsconfig.app.json' }] }),
+    'tsconfig.lib.json': JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { '@/*': ['lib/*'] } }, include: ['lib'] }),
+    'tsconfig.app.json': JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { '@/*': ['src/*'] } }, include: ['src'] }),
+    'src/a.ts': "import { b } from '@/b';\nexport const a = b;\n",
+    'src/b.ts': 'export const b = 1;\n',
+    'lib/b.ts': 'export const b = 2;\n',
+  }, [changed('src/a.ts'), changed('src/b.ts'), changed('lib/b.ts')]);
+  assert.deepEqual(edges, [{ from: 'src/a.ts', to: 'src/b.ts', kind: 'import' }]);
+});
+
+test('a test that imports a non-source file gives an import edge', async () => {
+  const edges = await edgesFor({
+    'src/a.test.ts': "import { a } from './a';\nimport type { T } from './types/t';\n",
+    'src/a.ts': 'export const a = 1;\n',
+    'src/types/t.ts': 'export type T = number;\n',
+  }, [changed('src/a.test.ts'), changed('src/a.ts'), changed('src/types/t.ts')]);
+  assert.deepEqual(edges, [
+    { from: 'src/a.test.ts', to: 'src/a.ts', kind: 'test' },
+    { from: 'src/a.test.ts', to: 'src/types/t.ts', kind: 'import' },
+  ]);
+});
+
+test('name edge ignores an edge to a non-source file', () => {
+  const files = [changed('src/foo.js'), changed('src/foo.test.js'), changed('src/types/t.js')];
+  assert.deepEqual(
+    nameEdges(files, [{ from: 'src/foo.test.js', to: 'src/types/t.js', kind: 'import' }]),
+    [{ from: 'src/foo.test.js', to: 'src/foo.js', kind: 'name' }],
+  );
+});
+
+test('a folder whose name starts with two dots maps', async () => {
+  const edges = await edgesFor({
+    '..hidden/a.ts': "import { b } from './b';\n",
+    '..hidden/b.ts': 'export const b = 1;\n',
+  }, [changed('..hidden/a.ts'), changed('..hidden/b.ts')]);
+  assert.deepEqual(edges, [{ from: '..hidden/a.ts', to: '..hidden/b.ts', kind: 'import' }]);
+});

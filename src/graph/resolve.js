@@ -24,16 +24,71 @@ const NO_INPUTS_FOUND = 18003;
 const toPosix = (path) => path.split(sep).join('/');
 
 /**
+ * Interface representing the folder entries of the changed files.
+ * @interface IEntries
+ * @typedef {Object} IEntries
+ * @property {Set<string>} files — Names of the changed files in the folder.
+ * @property {Set<string>} directories — Names of the subfolders that hold a changed file.
+ */
+
+/**
+ * @param {Map<string, IEntries>} entries
+ * @param {string} dir
+ * @returns {IEntries}
+ */
+const entriesAt = (entries, dir) => {
+  let found = entries.get(dir);
+  if (!found) {
+    found = { files: new Set(), directories: new Set() };
+    entries.set(dir, found);
+  }
+  return found;
+};
+
+/**
  * @param {any} ts
+ * @param {string[]} absFiles
+ * @returns {any}
+ */
+const changedFilesHost = (ts, absFiles) => {
+  /** @type {Map<string, IEntries>} */
+  const entries = new Map();
+  for (const absFile of absFiles) {
+    let dir = dirname(absFile);
+    entriesAt(entries, dir).files.add(basename(absFile));
+    while (dirname(dir) !== dir) {
+      entriesAt(entries, dirname(dir)).directories.add(basename(dir));
+      dir = dirname(dir);
+    }
+  }
+  const getEntries = (/** @type {string} */ dir) => {
+    const found = entries.get(toPosix(resolve(dir)));
+    return { files: found ? [...found.files] : [], directories: found ? [...found.directories] : [] };
+  };
+  return {
+    useCaseSensitiveFileNames: ts.sys.useCaseSensitiveFileNames,
+    fileExists: (/** @type {string} */ path) => ts.sys.fileExists(path),
+    readFile: (/** @type {string} */ path) => ts.sys.readFile(path),
+    readDirectory: (/** @type {string} */ rootDir, /** @type {string[]} */ extensions, /** @type {string[]} */ excludes, /** @type {string[]} */ includes, /** @type {number} */ depth) => (
+      typeof ts.matchFiles === 'function'
+        ? ts.matchFiles(rootDir, extensions, excludes, includes, ts.sys.useCaseSensitiveFileNames, ts.sys.getCurrentDirectory(), depth, getEntries, (/** @type {string} */ path) => path)
+        : []
+    ),
+  };
+};
+
+/**
+ * @param {any} ts
+ * @param {any} host
  * @param {string} configPath
  * @param {boolean} isRoot
  * @returns {IProject|null}
  */
-const parseProject = (ts, configPath, isRoot) => {
+const parseProject = (ts, host, configPath, isRoot) => {
   try {
     const read = ts.readConfigFile(configPath, ts.sys.readFile);
     if (read.error || !read.config) return null;
-    const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, dirname(configPath), undefined, configPath);
+    const parsed = ts.parseJsonConfigFileContent(read.config, host, dirname(configPath), undefined, configPath);
     /** @type {any[]} */
     const errors = parsed.errors ?? [];
     if (errors.some((error) => error.code !== NO_INPUTS_FOUND)) return null;
@@ -51,12 +106,14 @@ const parseProject = (ts, configPath, isRoot) => {
 /**
  * @param {any} ts
  * @param {string} root
+ * @param {string[]} absFiles
  * @returns {IProject[]}
  */
-const loadProjects = (ts, root) => {
+const loadProjects = (ts, root, absFiles) => {
   const rootConfig = join(root, 'tsconfig.json');
   if (!existsSync(rootConfig)) return [];
-  const rootProject = parseProject(ts, rootConfig, true);
+  const host = changedFilesHost(ts, absFiles);
+  const rootProject = parseProject(ts, host, rootConfig, true);
   /** @type {IProject[]} */
   const projects = [];
   if (rootProject) projects.push(rootProject);
@@ -64,7 +121,7 @@ const loadProjects = (ts, root) => {
   const references = rootProject?.references ?? readReferences(ts, rootConfig);
   for (const reference of references) {
     const refPath = isAbsolute(reference.path) ? reference.path : resolve(root, reference.path);
-    const project = parseProject(ts, refPath.endsWith('.json') ? refPath : join(refPath, 'tsconfig.json'), false);
+    const project = parseProject(ts, host, refPath.endsWith('.json') ? refPath : join(refPath, 'tsconfig.json'), false);
     if (project) projects.push(project);
   }
   return projects;
@@ -124,7 +181,7 @@ const rootsOf = (root) => {
 const toRepoPath = (roots, absPath) => {
   for (const root of roots) {
     const rel = relative(root, absPath);
-    if (!rel.startsWith('..') && !isAbsolute(rel)) return toPosix(rel);
+    if (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)) return toPosix(rel);
   }
   return '';
 };
@@ -137,7 +194,7 @@ const toRepoPath = (roots, absPath) => {
  */
 export const importEdges = (ts, root, files) => {
   const live = new Set(files.filter((f) => f.status !== 'deleted').map((f) => f.path));
-  const projects = loadProjects(ts, root);
+  const projects = loadProjects(ts, root, [...live].map((path) => toPosix(resolve(root, path))));
   const roots = rootsOf(root);
   /** @type {IChangeEdge[]} */
   const edges = [];
@@ -152,8 +209,8 @@ export const importEdges = (ts, root, files) => {
       continue;
     }
     const options = optionsFor(ts, projects, absFile);
-    const kindOfImporter = classifyFile(file.path);
-    const kind = kindOfImporter === 'test' || kindOfImporter === 'story' ? 'test' : 'import';
+    const importerKind = classifyFile(file.path);
+    const fromTest = importerKind === 'test' || importerKind === 'story';
     for (const imported of ts.preProcessFile(text, true, true).importedFiles) {
       let resolved;
       try {
@@ -166,7 +223,7 @@ export const importEdges = (ts, root, files) => {
       const key = `${file.path}\u0000${to}`;
       if (to === file.path || !live.has(to) || seen.has(key)) continue;
       seen.add(key);
-      edges.push({ from: file.path, to, kind });
+      edges.push({ from: file.path, to, kind: fromTest && classifyFile(to) === 'source' ? 'test' : 'import' });
     }
   }
   return edges;
@@ -186,7 +243,7 @@ const stemOf = (path) => basename(path).replace(/\.[^.]+$/, '');
 export const nameEdges = (files, edges) => {
   const live = files.filter((f) => f.status !== 'deleted').map((f) => f.path);
   const sources = live.filter((path) => classifyFile(path) === 'source').sort();
-  const withEdge = new Set(edges.map((e) => e.from));
+  const withEdge = new Set(edges.filter((e) => classifyFile(e.to) === 'source').map((e) => e.from));
   /** @type {IChangeEdge[]} */
   const added = [];
   for (const path of live) {
