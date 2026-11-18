@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.10](https://github.com/Jordyrock15/codereview-axi/compare/v0.1.9...v0.1.10) (2026-11-18)
+
+
+### Features
+
+* **graph:** add the change map and the Map view ([#35](https://github.com/Jordyrock15/codereview-axi/issues/35)) ([67f8128](https://github.com/Jordyrock15/codereview-axi/commit/67f8128b49a3591284db0c81a6430c603d50bca1))
+
 ## [0.1.9](https://github.com/Jordyrock15/codereview-axi/compare/v0.1.8...v0.1.9) (2026-08-06)
 
 
