@@ -104,6 +104,20 @@ export const createApp = ({
   });
 
   /**
+   * @param {Session} session
+   * @returns {Promise<Session>}
+   */
+  const backfillGraph = async (session) => {
+    if (session.status !== 'open' || session.graph !== undefined) return session;
+    const graph = graphFor(session.repo, session.snapshot);
+    return mutateState((state) => {
+      const live = state.sessions[session.key];
+      if (live.status === 'open' && live.graph === undefined) live.graph = graph;
+      return live;
+    });
+  };
+
+  /**
    * A closed session must stay readable (the browser shows its final state)
    * but must not accept further mutation.
    * @param {Session} session
@@ -373,7 +387,7 @@ export const createApp = ({
     {
       method: 'GET',
       pattern: '/api/sessions/:key',
-      handler: async (ctx) => ({ body: publicSession(await guarded(ctx)) }),
+      handler: async (ctx) => ({ body: publicSession(await backfillGraph(await guarded(ctx))) }),
     },
     {
       method: 'POST',
