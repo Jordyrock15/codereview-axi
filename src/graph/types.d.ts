@@ -55,16 +55,18 @@ export interface IChangeEdge {
  * Interface representing the facts about one graph build.
  * @interface IChangeGraphMeta
  * @property {boolean} typescript — True when a TypeScript JS API resolved the imports.
- * @property {string} typescriptFrom — One of repo, bundled or none.
+ * @property {string} typescriptFrom — One of bundled or none.
  * @property {string|null} typescriptVersion — Version of the TypeScript that the builder used, null for none.
+ * @property {string|null} repoTypescript — Version of the reviewed repo's TypeScript, read as text, null when the repo has none.
  * @property {string} message — One line for a surface to print.
  * @property {number} ms — Build time in milliseconds.
  * @property {number} version — Graph format version, 1 for file level.
  */
 export interface IChangeGraphMeta {
   typescript: boolean;
-  typescriptFrom: 'repo' | 'bundled' | 'none';
+  typescriptFrom: 'bundled' | 'none';
   typescriptVersion: string | null;
+  repoTypescript: string | null;
   message: string;
   ms: number;
   version: number;

@@ -7,6 +7,13 @@
     "codereview-axi": "bin/cr.js",
     "cr": "bin/cr.js"
   },
+  "exports": {
+    "./graph": {
+      "types": "./src/graph/build.d.ts",
+      "default": "./src/graph/build.js"
+    },
+    "./package.json": "./package.json"
+  },
   "engines": {
     "node": ">=20.19.0"
   },
