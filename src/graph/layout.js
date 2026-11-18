@@ -72,7 +72,7 @@ const remapEdges = (edges, owner) => {
  */
 const addMembers = (map, key, members) => {
   const list = map.get(key);
-  if (list) list.push(...members);
+  if (list) for (const member of members) list.push(member);
   else map.set(key, [...members]);
 };
 
@@ -115,7 +115,7 @@ const depthOf = (folder) => folder.split('/').length - 1;
  * @returns {Map<string, string[]>|null}
  */
 const promoteDeepest = (current) => {
-  const deepest = Math.max(0, ...[...current.keys()].map((id) => depthOf(parentOf(id))));
+  const deepest = [...current.keys()].reduce((max, id) => Math.max(max, depthOf(parentOf(id))), 0);
   if (deepest === 0) return null;
   return regroup(current, (id) => (depthOf(parentOf(id)) === deepest ? parentOf(id) : null));
 };

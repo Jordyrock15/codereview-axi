@@ -331,6 +331,7 @@ const scrollToComment = (id) => {
   if (!comment) return;
 
   if (comment.file !== null && (comment.file !== view.current || view.map.open)) showFile(comment.file);
+  else if (view.map.open) { view.map.open = false; renderMapView(); }
 
   const target = document.querySelector(`[data-comment-id="${id}"]`);
   target?.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'center' });

@@ -261,6 +261,27 @@ test('a comment jump while the map is open closes the map and shows the comment 
   }
 });
 
+test('a jump to a session comment while the map is open closes the map', async () => {
+  const app = await mountApp({
+    session: sessionFixture({
+      snapshot: snapshot(['src/a.ts', 'src/b.ts']),
+      graph: graphFixture(),
+      comments: [commentFixture({
+        id: 1, scope: 'session', file: null, side: null, startLine: null, endLine: null, status: 'open',
+      })],
+    }),
+  });
+  try {
+    await fire(app, byId(app, 'map-toggle'));
+    await fire(app, byId(app, 'queue-open'));
+    await fire(app, app.document.querySelector('#queue-list .queue-entry-open'));
+    assert.equal(byId(app, 'map').hidden, true);
+    assert.equal(byId(app, 'diff').hidden, false);
+  } finally {
+    app.teardown();
+  }
+});
+
 test('Enter on a focused node selects it, and the panel button opens its diff', async () => {
   const app = await mountApp({
     session: sessionFixture({ snapshot: snapshot(['src/a.ts', 'src/b.ts']), graph: graphFixture() }),
