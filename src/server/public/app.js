@@ -4,6 +4,8 @@
  * @typedef {import('../../types.js').Hunk} Hunk
  * @typedef {import('../../types.js').DiffLine} DiffLine
  * @typedef {import('../../types.js').Comment} Comment
+ * @typedef {import('../../graph/types.js').IChangeGraph} IChangeGraph
+ * @typedef {import('../../graph/types.js').IChangeNode} IChangeNode
  */
 
 import { renderLine } from './highlight.js';
@@ -19,6 +21,7 @@ import { identLabel, viewToggleLabel, noteTitle } from './labels.js';
 import { countsView } from './counts.js';
 import { buildQuote } from './quote.js';
 import { nextPick, pickRange, inPickRange, draftKey } from './pick.js';
+import { renderMap, neighbours, openCounts } from './map.js';
 
 const key = document.body.dataset.key;
 const token = new URLSearchParams(location.search).get('t') ?? '';
@@ -50,8 +53,8 @@ const api = (path, options = {}) => fetch(`/api/sessions/${key}${path}`, {
 const parsedLarge = Number(document.body.dataset.large ?? 1500);
 const LARGE = Number.isFinite(parsedLarge) && parsedLarge > 0 ? parsedLarge : 1500;
 
-/** @type {{session: Session|null, current: string|null}} */
-const view = { session: null, current: null };
+/** @type {{session: Session|null, current: string|null, map: {open: boolean, selected: string|null}}} */
+const view = { session: null, current: null, map: { open: false, selected: null } };
 
 /** Paths the human chose to render despite the large-file guard. @type {Set<string>} */
 const forced = new Set();
@@ -785,6 +788,9 @@ const renderDiff = () => {
   const file = session.snapshot.files.find((f) => f.path === view.current);
   if (!file) return;
 
+  const strip = neighbourStrip(file.path);
+  if (strip) pane.append(strip);
+
   const head = el('div', 'filehead');
   head.append(el('span', '', file.path), el('span', '', `+${file.added} -${file.removed}`));
   pane.append(head);
@@ -998,6 +1004,198 @@ const subscribe = () => {
   source.addEventListener('closed', () => { void load().then(markClosed); });
 };
 
+/** @returns {IChangeGraph|null} */
+const currentGraph = () => {
+  const graph = view.session?.graph;
+  return graph !== null && typeof graph === 'object' ? graph : null;
+};
+
+/** @returns {boolean} */
+const mapAvailable = () => currentGraph() !== null && (view.session?.snapshot.files.length ?? 0) >= 2;
+
+/**
+ * @param {IChangeGraph} graph
+ * @param {string|null} id
+ * @returns {IChangeNode|null}
+ */
+const nodeFor = (graph, id) => {
+  if (id === null) return null;
+  return graph.nodes.find((node) => node.id === id)
+    ?? graph.nodes.find((node) => node.members?.includes(id))
+    ?? null;
+};
+
+/** @type {[keyof import('./map.js').Neighbours, string][]} */
+const NEIGHBOUR_LABELS = [['imports', 'Imports'], ['importedBy', 'Imported by'], ['testedBy', 'Tested by']];
+
+/**
+ * @param {IChangeGraph} graph
+ * @param {string} id
+ * @returns {[string, string[]][]}
+ */
+const neighbourGroups = (graph, id) => {
+  const found = neighbours(graph, id);
+  return NEIGHBOUR_LABELS
+    .map(([field, label]) => /** @type {[string, string[]]} */ ([label, found[field]]))
+    .filter(([, paths]) => paths.length > 0);
+};
+
+/**
+ * @param {string} path
+ * @param {(path: string) => void} onClick
+ * @returns {HTMLElement}
+ */
+const pathButton = (path, onClick) => {
+  const button = el('button', 'path-link', path);
+  button.setAttribute('type', 'button');
+  button.title = path;
+  button.addEventListener('click', () => onClick(path));
+  return button;
+};
+
+/**
+ * @param {string} path
+ * @returns {HTMLElement|null}
+ */
+const neighbourStrip = (path) => {
+  const graph = currentGraph();
+  if (!graph || !graph.nodes.some((node) => node.id === path)) return null;
+  const groups = neighbourGroups(graph, path);
+  if (groups.length === 0) return null;
+
+  const files = new Set(view.session?.snapshot.files.map((file) => file.path));
+  const strip = el('div', 'strip');
+  for (const [label, paths] of groups) {
+    const group = el('span', 'strip-group');
+    group.append(el('span', 'strip-label', label));
+    for (const neighbour of paths) {
+      group.append(files.has(neighbour) ? pathButton(neighbour, openDiff) : el('span', 'strip-path', neighbour));
+    }
+    strip.append(group);
+  }
+  return strip;
+};
+
+/**
+ * @param {string} path
+ * @returns {void}
+ */
+const openDiff = (path) => {
+  view.current = path;
+  view.map.selected = path;
+  view.map.open = false;
+  renderMapView();
+  renderDiff();
+  renderFiles();
+};
+
+/**
+ * @param {string} id
+ * @returns {void}
+ */
+const selectNode = (id) => {
+  const graph = currentGraph();
+  if (!graph) return;
+  view.map.selected = id;
+  const selected = nodeFor(graph, id)?.id ?? null;
+  for (const element of $('map-canvas').querySelectorAll('g.node')) {
+    element.classList.toggle('selected', element.getAttribute('data-id') === selected);
+  }
+  renderMapPanel(graph);
+};
+
+/**
+ * @param {string} id
+ * @returns {void}
+ */
+const openNode = (id) => {
+  const graph = currentGraph();
+  if (graph && nodeFor(graph, id)?.members) {
+    selectNode(id);
+    return;
+  }
+  openDiff(id);
+};
+
+/**
+ * @param {IChangeGraph} graph
+ * @returns {void}
+ */
+const renderMapPanel = (graph) => {
+  const panel = $('map-panel');
+  panel.replaceChildren();
+  const node = nodeFor(graph, view.map.selected);
+  if (!node) {
+    panel.append(el('p', 'hint', 'Select a file to see its neighbours.'));
+    return;
+  }
+
+  if (node.members) {
+    const total = node.members.length;
+    panel.append(el('h3', '', `${node.id} (${total} ${total === 1 ? 'file' : 'files'})`));
+    const list = el('ul');
+    for (const member of node.members) {
+      const item = el('li');
+      item.append(pathButton(member, openDiff));
+      list.append(item);
+    }
+    panel.append(list);
+    return;
+  }
+
+  panel.append(el('h3', '', node.id));
+  for (const [label, paths] of neighbourGroups(graph, node.id)) {
+    panel.append(el('h4', '', label));
+    const list = el('ul');
+    for (const neighbour of paths) {
+      const item = el('li');
+      item.append(pathButton(neighbour, selectNode));
+      list.append(item);
+    }
+    panel.append(list);
+  }
+  const open = el('button', 'open-diff', 'Open diff');
+  open.setAttribute('type', 'button');
+  open.addEventListener('click', () => openDiff(node.id));
+  panel.append(open);
+};
+
+/** @returns {void} */
+const renderMapView = () => {
+  const available = mapAvailable();
+  if (!available) view.map.open = false;
+  const { open } = view.map;
+  const toggle = $('map-toggle');
+  toggle.hidden = !available;
+  toggle.textContent = open ? 'Diff' : 'Map';
+  $('map').hidden = !open;
+  $('diff').hidden = open;
+
+  const graph = currentGraph();
+  const canvas = $('map-canvas');
+  if (!open || !graph) {
+    canvas.replaceChildren();
+    $('map-panel').replaceChildren();
+    $('map-note').textContent = '';
+    return;
+  }
+
+  $('map-note').textContent = graph.meta.typescript ? '' : graph.meta.message;
+  canvas.replaceChildren(renderMap(document, graph, {
+    selected: nodeFor(graph, view.map.selected)?.id ?? null,
+    counts: openCounts(view.session?.comments ?? []),
+    onSelect: selectNode,
+    onOpen: openNode,
+  }));
+  renderMapPanel(graph);
+};
+
+/** @returns {void} */
+const toggleMap = () => {
+  view.map.open = !view.map.open;
+  renderMapView();
+};
+
 /** @returns {Promise<void>} */
 const load = async () => {
   const res = await api('');
@@ -1011,6 +1209,8 @@ const load = async () => {
   const session = await res.json();
   view.session = session;
   view.current ??= session.snapshot.files[0]?.path ?? null;
+  const graph = currentGraph();
+  if (graph === null || nodeFor(graph, view.map.selected) === null) view.map.selected = null;
   const ident = identLabel(session);
   const said = session.note || '';
   $('ident').textContent = ident;
@@ -1019,6 +1219,7 @@ const load = async () => {
   $('view').textContent = viewToggleLabel(session);
   renderFiles();
   renderDiff();
+  renderMapView();
   counts();
   renderActivity();
   renderQueuePanel();
@@ -1034,6 +1235,7 @@ const toggleView = async () => {
 $('send').addEventListener('click', send);
 $('done').addEventListener('click', done);
 $('view').addEventListener('click', toggleView);
+$('map-toggle').addEventListener('click', toggleMap);
 $('queue-open').addEventListener('click', () => toggleQueuePanel('queued'));
 $('pending-open').addEventListener('click', () => toggleQueuePanel('pending'));
 $('answered-open').addEventListener('click', () => toggleQueuePanel('answered'));

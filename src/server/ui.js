@@ -45,6 +45,7 @@ export const shellHtml = (key) => `<!doctype html>
     </span>
     <span id="activity" data-delivery="idle"></span>
     <button id="view" title="Toggle side-by-side">split</button>
+    <button id="map-toggle" type="button" hidden>Map</button>
     <button id="queue-open" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="queue-panel">Queued 0</button>
     <button id="pending-open" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="queue-panel">Pending 0</button>
     <button id="answered-open" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="queue-panel">Answered 0</button>
@@ -68,6 +69,7 @@ export const shellHtml = (key) => `<!doctype html>
   <nav id="files" aria-label="Changed files"></nav>
   <div id="diff-wrap">
     <section id="diff" aria-label="Diff"></section>
+    <section id="map" aria-label="Change map" hidden><p id="map-note"></p><div id="map-canvas"></div><aside id="map-panel" aria-label="Neighbours"></aside></section>
     <div id="diff-overlay" aria-hidden="true"><span class="spinner"></span><span id="diff-overlay-label">Updating</span></div>
   </div>
 </main>
