@@ -12,6 +12,7 @@
 
 /** @type {NodeKind[]} */
 const KIND_ORDER = ['source', 'test', 'story', 'types', 'config'];
+const CONFIG_ROW_WIDTH = 6;
 
 /**
  * @param {string} a
@@ -65,6 +66,72 @@ const remapEdges = (edges, owner) => {
 };
 
 /**
+ * @param {Map<string, string[]>} map
+ * @param {string} key
+ * @param {string[]} members
+ */
+const addMembers = (map, key, members) => {
+  const list = map.get(key);
+  if (list) list.push(...members);
+  else map.set(key, [...members]);
+};
+
+/**
+ * @param {Map<string, string[]>} current
+ * @param {(id: string) => string|null} targetOf
+ * @returns {Map<string, string[]>}
+ */
+const regroup = (current, targetOf) => {
+  /** @type {Map<string, string[]>} */
+  const next = new Map();
+  for (const [id, members] of current) addMembers(next, targetOf(id) ?? id, members);
+  return next;
+};
+
+/**
+ * @param {Map<string, string[]>} current
+ * @returns {Map<string, string[]>|null}
+ */
+const mergeSiblings = (current) => {
+  /** @type {Map<string, number>} */
+  const counts = new Map();
+  for (const id of current.keys()) {
+    const parent = parentOf(id);
+    if (parent !== '') counts.set(parent, (counts.get(parent) ?? 0) + 1);
+  }
+  const merging = (/** @type {string} */ id) => (counts.get(parentOf(id)) ?? 0) >= 2;
+  if (![...current.keys()].some(merging)) return null;
+  return regroup(current, (id) => (merging(id) ? parentOf(id) : null));
+};
+
+/**
+ * @param {string} folder
+ * @returns {number}
+ */
+const depthOf = (folder) => folder.split('/').length - 1;
+
+/**
+ * @param {Map<string, string[]>} current
+ * @returns {Map<string, string[]>|null}
+ */
+const promoteDeepest = (current) => {
+  const deepest = Math.max(0, ...[...current.keys()].map((id) => depthOf(parentOf(id))));
+  if (deepest === 0) return null;
+  return regroup(current, (id) => (depthOf(parentOf(id)) === deepest ? parentOf(id) : null));
+};
+
+/**
+ * @param {Map<string, string[]>} current
+ * @param {(id: string) => boolean} joins
+ * @returns {Map<string, string[]>|null}
+ */
+const mergeRoot = (current, joins) => {
+  const joining = new Set([...current.keys()].filter((id) => id !== './' && parentOf(id) === '' && joins(id)));
+  if (joining.size === 0 || (joining.size === 1 && !current.has('./'))) return null;
+  return regroup(current, (id) => (joining.has(id) ? './' : null));
+};
+
+/**
  * @param {IChangeNode[]} nodes
  * @param {IChangeEdge[]} edges
  * @param {number} [limit]
@@ -77,28 +144,9 @@ export const groupFolders = (nodes, edges, limit = 40) => {
   /** @type {Map<string, string[]>} */
   let current = new Map(nodes.map((n) => [n.id, n.members ? [...n.members] : [n.id]]));
   while (current.size > limit) {
-    /** @type {Map<string, string[]>} */
-    const buckets = new Map();
-    for (const id of current.keys()) {
-      const parent = parentOf(id);
-      if (parent === '') continue;
-      buckets.set(parent, [...(buckets.get(parent) ?? []), id]);
-    }
-    /** @type {Map<string, string[]>} */
-    const next = new Map();
-    let merged = false;
-    for (const [id, members] of current) {
-      const parent = parentOf(id);
-      const siblings = buckets.get(parent);
-      if (parent === '' || !siblings || siblings.length < 2) {
-        next.set(id, members);
-        continue;
-      }
-      merged = true;
-      next.set(parent, [...(next.get(parent) ?? []), ...members]);
-    }
+    const next = mergeSiblings(current) ?? promoteDeepest(current) ?? mergeRoot(current, (id) => !id.endsWith('/')) ?? mergeRoot(current, () => true);
+    if (!next) break;
     current = next;
-    if (!merged) break;
   }
   /** @type {Map<string, string>} */
   const owner = new Map();
@@ -240,8 +288,8 @@ export const layoutGraph = (nodes, edges) => {
     [...linked, ...unlinked].forEach((p, index) => row.set(p.id, index));
   }
   configs.forEach((id, index) => {
-    layer.set(id, index);
-    row.set(id, tallest);
+    layer.set(id, index % CONFIG_ROW_WIDTH);
+    row.set(id, tallest + Math.floor(index / CONFIG_ROW_WIDTH));
   });
 
   return {

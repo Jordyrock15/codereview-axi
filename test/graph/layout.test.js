@@ -110,6 +110,44 @@ test('regroup one level up', () => {
   assert.equal(out.nodes[0].members?.length, 90);
 });
 
+test('sparse folders group one level higher until 40 or fewer', () => {
+  const nodes = Array.from({ length: 45 }, (_, i) => node(`pkg${i}/src/a.ts`));
+  const out = groupFolders(nodes, [edge('pkg0/src/a.ts', 'pkg1/src/a.ts')]);
+  assert.ok(out.nodes.length <= 40, `${out.nodes.length} nodes`);
+  assert.equal(out.nodes.reduce((sum, n) => sum + (n.members?.length ?? 1), 0), 45);
+});
+
+test('sparse folders keep the groups that fit', () => {
+  const nodes = [
+    ...Array.from({ length: 30 }, (_, i) => node(`lib/f${i}.ts`)),
+    ...Array.from({ length: 15 }, (_, i) => node(`pkg${i}/src/a.ts`)),
+  ];
+  const out = groupFolders(nodes, []);
+  assert.ok(out.nodes.length <= 40, `${out.nodes.length} nodes`);
+  assert.equal(find(out.nodes, 'lib/').members?.length, 30);
+});
+
+test('root files group as ./ last', () => {
+  const nodes = Array.from({ length: 45 }, (_, i) => node(`f${i}.ts`));
+  const out = groupFolders(nodes, []);
+  assert.ok(out.nodes.length <= 40, `${out.nodes.length} nodes`);
+  assert.equal(find(out.nodes, './').members?.length, 45);
+});
+
+test('root files stay files when folder groups are enough', () => {
+  const nodes = [...Array.from({ length: 30 }, (_, i) => node(`src/f${i}.ts`)), ...Array.from({ length: 15 }, (_, i) => node(`r${i}.ts`))];
+  const out = groupFolders(nodes, []);
+  assert.equal(out.nodes.length, 16);
+  assert.equal(out.nodes.some((n) => n.id === './'), false);
+});
+
+test('config row wraps after 6 nodes', () => {
+  const nodes = [node('src/a.ts'), ...Array.from({ length: 8 }, (_, i) => node(`c${i}.config.ts`))];
+  const out = layoutGraph(nodes, []);
+  const configs = out.nodes.filter((n) => n.kind === 'config');
+  assert.deepEqual(configs.map((n) => [n.layer, n.row]), [[0, 1], [1, 1], [2, 1], [3, 1], [4, 1], [5, 1], [0, 2], [1, 2]]);
+});
+
 test('group kind ties go to source and edges drop self links', () => {
   const nodes = [
     node('src/x/a.ts'), node('src/x/a.test.ts'),

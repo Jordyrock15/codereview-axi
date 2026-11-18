@@ -83,6 +83,21 @@ test('no fallback', async () => {
   }
 });
 
+test('41 changed files give folder groups', async () => {
+  /** @type {Record<string, string>} */
+  const files = {};
+  for (let i = 0; i < 21; i += 1) files[`src/a/f${i}.ts`] = i === 0 ? "import { b } from '../b/f0';\nexport const a = b;\n" : 'export const a = 1;\n';
+  for (let i = 0; i < 20; i += 1) files[`src/b/f${i}.ts`] = 'export const b = 1;\n';
+  const tree = await makeTree(files);
+  try {
+    const graph = buildChangeGraph(tree.dir, Object.keys(files).map((path) => changed(path)));
+    assert.deepEqual(graph.nodes.map((n) => [n.id, n.members?.length]), [['src/a/', 21], ['src/b/', 20]]);
+    assert.deepEqual(graph.edges, [{ from: 'src/a/', to: 'src/b/', kind: 'import' }]);
+  } finally {
+    await tree.cleanup();
+  }
+});
+
 test('import edge failure keeps nodes and name edges', async () => {
   const tree = await makeTree({ 'src/foo.js': 'export const foo = 1;\n', 'src/foo.test.js': '\n' });
   try {
