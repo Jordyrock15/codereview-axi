@@ -138,6 +138,17 @@ test('label is text', () => {
   assert.equal(svg.querySelector('g.node')?.getAttribute('data-id'), id);
 });
 
+test('a long name is cut short so it clears the new tag', () => {
+  const { document } = dom();
+  const svg = renderMap(document, graph([
+    node({ id: 'test/server/graph-routes.test.js', isNew: true }),
+    node({ id: 'test/server/abcdefghijklmnopqrstuvwxyz.js' }),
+  ]), { selected: null, counts: new Map(), onSelect: noop, onOpen: noop });
+  const names = [...svg.querySelectorAll('text.name')].map((text) => text.textContent);
+
+  assert.deepEqual(names, ['graph-routes.test…', 'abcdefghijklmnopqrst…']);
+});
+
 test('click, Enter and Space select, double click opens', () => {
   const window = dom();
   /** @type {string[]} */

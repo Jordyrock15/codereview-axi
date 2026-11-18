@@ -38,7 +38,8 @@ const COL_GAP = 60;
 const ROW_GAP = 16;
 const PAD = 16;
 const GRID_COLS = 4;
-const LABEL_MAX = 24;
+const LABEL_MAX = 21;
+const LABEL_MAX_TAGGED = 18;
 const SAME_COLUMN_BULGE = 30;
 
 const OPEN_STATUSES = new Set(['open', 'sent', 'answered']);
@@ -79,11 +80,12 @@ export const openCounts = (comments) => {
  * @returns {string}
  */
 const nodeLabel = (node) => {
+  const max = node.isNew ? LABEL_MAX_TAGGED : LABEL_MAX;
   if (node.members) {
-    return node.id.length > LABEL_MAX ? `…${node.id.slice(-(LABEL_MAX - 1))}` : node.id;
+    return node.id.length > max ? `…${node.id.slice(-(max - 1))}` : node.id;
   }
   const base = node.id.slice(node.id.lastIndexOf('/') + 1);
-  return base.length > LABEL_MAX ? `${base.slice(0, LABEL_MAX - 1)}…` : base;
+  return base.length > max ? `${base.slice(0, max - 1)}…` : base;
 };
 
 /**
